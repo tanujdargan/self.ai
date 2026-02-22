@@ -1,0 +1,5 @@
+[project]
+name = "selfai"
+version = "0.1.0"
+description = "Finetune LLMs on your personal chat history, fully local"
+requires-python = ">=3.10"
