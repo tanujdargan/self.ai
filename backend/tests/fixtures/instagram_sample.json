@@ -1,0 +1,28 @@
+{
+  "participants": [
+    {"name": "You"},
+    {"name": "JohnDoe"}
+  ],
+  "messages": [
+    {
+      "sender_name": "JohnDoe",
+      "timestamp_ms": 1702656000000,
+      "content": "Hey what's up",
+      "type": "Generic"
+    },
+    {
+      "sender_name": "You",
+      "timestamp_ms": 1702656060000,
+      "content": "Not much, coding",
+      "type": "Generic"
+    },
+    {
+      "sender_name": "JohnDoe",
+      "timestamp_ms": 1702656120000,
+      "type": "Share",
+      "share": {"link": "https://example.com"}
+    }
+  ],
+  "title": "JohnDoe",
+  "is_still_participant": true
+}

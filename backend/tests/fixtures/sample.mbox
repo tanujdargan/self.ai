@@ -1,0 +1,20 @@
+From sender@example.com Fri Jan 15 14:30:00 2024
+From: John <john@example.com>
+To: You <you@example.com>
+Subject: Hello
+Date: Mon, 15 Jan 2024 14:30:00 +0000
+Message-ID: <msg001@example.com>
+
+Hey, how are you?
+
+From you@example.com Fri Jan 15 14:35:00 2024
+From: You <you@example.com>
+To: John <john@example.com>
+Subject: Re: Hello
+Date: Mon, 15 Jan 2024 14:35:00 +0000
+Message-ID: <msg002@example.com>
+In-Reply-To: <msg001@example.com>
+
+I'm great! Working on a project.
+
+> Hey, how are you?

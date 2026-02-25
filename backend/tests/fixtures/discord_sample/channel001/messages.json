@@ -1,0 +1,21 @@
+[
+  {
+    "ID": "1001",
+    "Timestamp": "2024-01-15T14:30:00.000+00:00",
+    "Contents": "Hey everyone",
+    "Author": {"id": "111", "username": "You", "discriminator": "0"}
+  },
+  {
+    "ID": "1002",
+    "Timestamp": "2024-01-15T14:31:00.000+00:00",
+    "Contents": "What's up",
+    "Author": {"id": "222", "username": "JohnDoe", "discriminator": "0"}
+  },
+  {
+    "ID": "1003",
+    "Timestamp": "2024-01-15T14:32:00.000+00:00",
+    "Contents": "",
+    "Author": {"id": "111", "username": "You", "discriminator": "0"},
+    "Attachments": "image.png"
+  }
+]
