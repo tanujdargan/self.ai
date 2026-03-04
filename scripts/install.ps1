@@ -5,6 +5,7 @@ $ErrorActionPreference = "Stop"
 $SELFAI_PORT = 8420
 $SELFAI_HOME = "$env:USERPROFILE\.selfai"
 $REPO_URL = "https://github.com/tanujdargan/self.ai.git"
+$Verbose = $false
 
 function Write-Step($msg)  { Write-Host "`n-> $msg" -ForegroundColor Cyan }
 function Write-Ok($msg)    { Write-Host "  + $msg" -ForegroundColor Green }
@@ -150,10 +151,18 @@ function Install-Backend($repoDir, $py, $gpu) {
     $ErrorActionPreference = "Continue"
 
     Write-Host "  Installing PyTorch ($($gpu.Type))..." -ForegroundColor Blue
-    if ($gpu.IndexUrl) {
-        & pip install torch --index-url $gpu.IndexUrl --quiet 2>&1 | Out-Null
+    if ($script:Verbose) {
+        if ($gpu.IndexUrl) {
+            & pip install torch --index-url $gpu.IndexUrl
+        } else {
+            & pip install torch
+        }
     } else {
-        & pip install torch --quiet 2>&1 | Out-Null
+        if ($gpu.IndexUrl) {
+            & pip install torch --index-url $gpu.IndexUrl --quiet 2>&1 | Out-Null
+        } else {
+            & pip install torch --quiet 2>&1 | Out-Null
+        }
     }
     if ($LASTEXITCODE -ne 0) { Write-Fail "PyTorch installation failed (exit code $LASTEXITCODE)" }
     Write-Ok "PyTorch installed"
@@ -161,7 +170,11 @@ function Install-Backend($repoDir, $py, $gpu) {
     $reqFile = Join-Path $backendDir "requirements.txt"
     if (Test-Path $reqFile) {
         Write-Host "  Installing backend dependencies..." -ForegroundColor Blue
-        & pip install -r requirements.txt --quiet 2>&1 | Out-Null
+        if ($script:Verbose) {
+            & pip install -r requirements.txt
+        } else {
+            & pip install -r requirements.txt --quiet 2>&1 | Out-Null
+        }
         if ($LASTEXITCODE -ne 0) { Write-Fail "Backend dependency installation failed (exit code $LASTEXITCODE)" }
         Write-Ok "Backend dependencies installed"
     } else {
@@ -191,11 +204,19 @@ function Install-Frontend($repoDir) {
     $ErrorActionPreference = "Continue"
 
     Write-Host "  Installing frontend dependencies..." -ForegroundColor Blue
-    & npm install --silent 2>&1 | Out-Null
+    if ($script:Verbose) {
+        & npm install
+    } else {
+        & npm install --silent 2>&1 | Out-Null
+    }
     if ($LASTEXITCODE -ne 0) { Write-Fail "npm install failed (exit code $LASTEXITCODE)" }
     Write-Ok "npm packages installed"
 
-    & npm run build 2>&1 | Out-Null
+    if ($script:Verbose) {
+        & npm run build 2>&1
+    } else {
+        & npm run build 2>&1 | Out-Null
+    }
     if ($LASTEXITCODE -eq 0) {
         Write-Ok "Frontend built"
     } else {
@@ -273,6 +294,13 @@ function Main {
     Write-Host "                         |__/ " -ForegroundColor Cyan
     Write-Host ""
     Write-Host "  Local LLM Finetuning Platform" -ForegroundColor White
+    Write-Host ""
+
+    $choice = Read-Host "  Enable verbose output? (y/N)"
+    if ($choice -match '^[yY]') {
+        $script:Verbose = $true
+        Write-Ok "Verbose mode enabled"
+    }
     Write-Host ""
 
     $gpu = Get-GPU
