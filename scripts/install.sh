@@ -79,7 +79,7 @@ detect_gpu() {
         return
     fi
 
-    TORCH_INDEX="https://download.pytorch.org/whl/cpu"
+    TORCH_INDEX=""
     warn "No GPU detected, falling back to CPU"
 }
 

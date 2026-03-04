@@ -36,7 +36,7 @@ function Get-GPU {
     }
 
     Write-Warn "No GPU detected, falling back to CPU"
-    return @{ Type = "cpu"; IndexUrl = "https://download.pytorch.org/whl/cpu" }
+    return @{ Type = "cpu"; IndexUrl = "" }
 }
 
 # ---------------------------------------------------------------------------
