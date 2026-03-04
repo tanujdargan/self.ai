@@ -348,11 +348,12 @@ function Install-Frontend($repoDir) {
     Invoke-Npm -Arguments @("install")
     Write-Ok "npm packages installed"
 
-    $buildExit = Invoke-Npm -Arguments @("run", "build") -AllowFail
-    if ($buildExit -eq 0) {
+    Write-Host "  Building frontend..." -ForegroundColor Blue
+    & npm run build 2>&1
+    if ($LASTEXITCODE -eq 0) {
         Write-Ok "Frontend built"
     } else {
-        Write-Warn "Frontend build skipped (no build script or build failed)"
+        Write-Fail "Frontend build failed (exit code $LASTEXITCODE). Check the output above."
     }
 
     Pop-Location
@@ -391,8 +392,10 @@ function Install-Launcher($repoDir) {
 
     $currentPath = [Environment]::GetEnvironmentVariable("PATH", "User")
     if ($currentPath -notlike "*$destDir*") {
-        Write-Warn "$destDir is not in your PATH. Add it:"
-        Write-Host "    `$env:PATH = `"$destDir;`$env:PATH`"" -ForegroundColor Cyan
+        [Environment]::SetEnvironmentVariable("PATH", "$destDir;$currentPath", "User")
+        $env:PATH = "$destDir;$env:PATH"
+        Write-Ok "Added $destDir to user PATH"
+        Write-Warn "Restart your terminal for PATH changes to take effect"
     }
 }
 

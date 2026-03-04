@@ -364,11 +364,9 @@ setup_frontend() {
     run_npm install
     ok "npm packages installed"
 
-    if run_npm --allow-fail run build; then
-        ok "Frontend built"
-    else
-        warn "Frontend build skipped (no build script or build failed)"
-    fi
+    log "Building frontend..."
+    npm run build || fail "Frontend build failed. Check the output above."
+    ok "Frontend built"
 
     cd "$SELFAI_DIR"
 }
