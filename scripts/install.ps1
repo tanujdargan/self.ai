@@ -1,4 +1,5 @@
 #Requires -Version 5.1
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
 $ErrorActionPreference = "Stop"
 
 $SELFAI_PORT = 8420

@@ -31,7 +31,7 @@ curl -fsSL https://raw.githubusercontent.com/tanujdargan/self.ai/master/scripts/
 
 **Windows (PowerShell):**
 ```powershell
-irm https://raw.githubusercontent.com/tanujdargan/self.ai/master/scripts/install.ps1 | iex
+powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/tanujdargan/self.ai/master/scripts/install.ps1 | iex"
 ```
 
 ### Manual setup
