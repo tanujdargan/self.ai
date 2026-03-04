@@ -12,7 +12,7 @@ NC='\033[0m'
 SELFAI_PORT=8420
 SELFAI_HOME="$HOME/.selfai"
 SELFAI_BIN="$HOME/.local/bin"
-REPO_URL="https://github.com/selfai-platform/self.ai.git"
+REPO_URL="https://github.com/tanujdargan/self.ai.git"
 
 cleanup() {
     local exit_code=$?

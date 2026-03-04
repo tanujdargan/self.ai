@@ -3,12 +3,18 @@ $ErrorActionPreference = "Stop"
 
 $SELFAI_PORT = 8420
 $SELFAI_HOME = "$env:USERPROFILE\.selfai"
-$REPO_URL = "https://github.com/selfai-platform/self.ai.git"
+$REPO_URL = "https://github.com/tanujdargan/self.ai.git"
 
 function Write-Step($msg)  { Write-Host "`n-> $msg" -ForegroundColor Cyan }
 function Write-Ok($msg)    { Write-Host "  + $msg" -ForegroundColor Green }
 function Write-Warn($msg)  { Write-Host "  ! $msg" -ForegroundColor Yellow }
-function Write-Fail($msg)  { Write-Host "  x $msg" -ForegroundColor Red; exit 1 }
+function Write-Fail($msg) {
+    Write-Host "  x $msg" -ForegroundColor Red
+    Write-Host ""
+    Write-Host "  Press Enter to exit..." -ForegroundColor Yellow
+    Read-Host
+    exit 1
+}
 
 # ---------------------------------------------------------------------------
 function Test-Command($name) {
@@ -272,4 +278,13 @@ function Main {
     Write-Success $repoDir $gpu
 }
 
-Main
+try {
+    Main
+} catch {
+    Write-Host ""
+    Write-Host "  x Installation failed: $_" -ForegroundColor Red
+    Write-Host ""
+    Write-Host "  Press Enter to exit..." -ForegroundColor Yellow
+    Read-Host
+    exit 1
+}
