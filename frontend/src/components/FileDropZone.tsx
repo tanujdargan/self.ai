@@ -2,11 +2,11 @@ import { useState, useCallback, useRef } from "react";
 import type { DragEvent } from "react";
 
 interface FileDropZoneProps {
-  onFileDrop: (file: File) => void;
+  onFilesDrop: (files: File[]) => void;
   disabled?: boolean;
 }
 
-export function FileDropZone({ onFileDrop, disabled }: FileDropZoneProps) {
+export function FileDropZone({ onFilesDrop, disabled }: FileDropZoneProps) {
   const [isDragging, setIsDragging] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -28,10 +28,10 @@ export function FileDropZone({ onFileDrop, disabled }: FileDropZoneProps) {
       e.preventDefault();
       setIsDragging(false);
       if (disabled) return;
-      const file = e.dataTransfer.files[0];
-      if (file) onFileDrop(file);
+      const files = Array.from(e.dataTransfer.files);
+      if (files.length > 0) onFilesDrop(files);
     },
-    [onFileDrop, disabled]
+    [onFilesDrop, disabled]
   );
 
   const handleClick = () => {
@@ -39,8 +39,8 @@ export function FileDropZone({ onFileDrop, disabled }: FileDropZoneProps) {
   };
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) onFileDrop(file);
+    const files = e.target.files ? Array.from(e.target.files) : [];
+    if (files.length > 0) onFilesDrop(files);
     if (inputRef.current) inputRef.current.value = "";
   };
 
@@ -67,6 +67,7 @@ export function FileDropZone({ onFileDrop, disabled }: FileDropZoneProps) {
         className="hidden"
         onChange={handleChange}
         disabled={disabled}
+        multiple
         accept=".txt,.json,.csv,.zip,.html,.mbox,.eml"
       />
 

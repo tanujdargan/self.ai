@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { FileDropZone } from "../components/FileDropZone.tsx";
 import { ImportProgress } from "../components/ImportProgress.tsx";
-import { useImportUpload } from "../api/imports.ts";
+import { useMultiImportUpload } from "../api/imports.ts";
 import type { Source } from "../api/imports.ts";
 
 const SOURCES: { id: Source; label: string; icon: React.ReactNode }[] = [
@@ -64,42 +64,35 @@ const SOURCES: { id: Source; label: string; icon: React.ReactNode }[] = [
 
 export function ImportPage() {
   const [selectedSource, setSelectedSource] = useState<Source | null>(null);
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const importMutation = useImportUpload();
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const { state: multiState, upload, reset: resetMulti } = useMultiImportUpload();
 
-  const handleFileDrop = (file: File) => {
-    setSelectedFile(file);
-    if (selectedSource) {
-      importMutation.mutate({ file, source: selectedSource });
-    }
+  const handleFilesDrop = (files: File[]) => {
+    setSelectedFiles((prev) => [...prev, ...files]);
   };
 
   const handleSourceSelect = (source: Source) => {
     setSelectedSource(source);
-    if (selectedFile && !importMutation.isPending) {
-      importMutation.reset();
-    }
   };
 
   const handleUpload = () => {
-    if (selectedFile && selectedSource) {
-      importMutation.mutate({ file: selectedFile, source: selectedSource });
+    if (selectedFiles.length > 0 && selectedSource) {
+      upload(selectedFiles, selectedSource);
     }
   };
 
   const handleReset = () => {
-    setSelectedFile(null);
+    setSelectedFiles([]);
     setSelectedSource(null);
-    importMutation.reset();
+    resetMulti();
   };
 
-  const uploadStatus = importMutation.isPending
-    ? "uploading"
-    : importMutation.isSuccess
-      ? "success"
-      : importMutation.isError
-        ? "error"
-        : "idle";
+  const handleRemoveFile = (index: number) => {
+    setSelectedFiles((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const isDone = !multiState.isUploading && multiState.totalFiles > 0;
+  const isIdle = multiState.totalFiles === 0;
 
   return (
     <div className="p-6 max-w-2xl mx-auto">
@@ -119,7 +112,7 @@ export function ImportPage() {
             <button
               key={source.id}
               onClick={() => handleSourceSelect(source.id)}
-              disabled={importMutation.isPending}
+              disabled={multiState.isUploading}
               className={`
                 flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium
                 transition-all duration-200 active:scale-95
@@ -128,7 +121,7 @@ export function ImportPage() {
                     ? "bg-zinc-100 text-zinc-900"
                     : "bg-zinc-800/80 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200"
                 }
-                ${importMutation.isPending ? "opacity-50 cursor-not-allowed" : ""}
+                ${multiState.isUploading ? "opacity-50 cursor-not-allowed" : ""}
               `}
             >
               {source.icon}
@@ -140,69 +133,81 @@ export function ImportPage() {
 
       <div className="animate-fade-in-up stagger-2">
         <FileDropZone
-          onFileDrop={handleFileDrop}
-          disabled={importMutation.isPending}
+          onFilesDrop={handleFilesDrop}
+          disabled={multiState.isUploading}
         />
       </div>
 
-      {selectedFile && !importMutation.isPending && !importMutation.isSuccess && !importMutation.isError && (
-        <div className="mt-4 flex items-center justify-between bg-zinc-900/50 border border-zinc-800 rounded-lg p-4">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-zinc-800 flex items-center justify-center">
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                className="h-4 w-4 text-zinc-400"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-                />
-              </svg>
-            </div>
-            <div>
-              <p className="text-zinc-300 text-sm font-medium">
-                {selectedFile.name}
-              </p>
-              <p className="text-zinc-600 text-xs">
-                {(selectedFile.size / 1024).toFixed(1)} KB
-              </p>
-            </div>
-          </div>
-          {selectedSource ? (
-            <button
-              onClick={handleUpload}
-              className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg transition-colors"
+      {selectedFiles.length > 0 && isIdle && (
+        <div className="mt-4 space-y-2">
+          {selectedFiles.map((file, i) => (
+            <div
+              key={`${file.name}-${i}`}
+              className="flex items-center justify-between bg-zinc-900/50 border border-zinc-800 rounded-lg p-3"
             >
-              Upload
-            </button>
-          ) : (
-            <span className="text-zinc-500 text-sm">Select a source first</span>
-          )}
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-lg bg-zinc-800 flex items-center justify-center">
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    className="h-4 w-4 text-zinc-400"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                    />
+                  </svg>
+                </div>
+                <div>
+                  <p className="text-zinc-300 text-sm font-medium">
+                    {file.name}
+                  </p>
+                  <p className="text-zinc-600 text-xs">
+                    {(file.size / 1024).toFixed(1)} KB
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => handleRemoveFile(i)}
+                className="text-zinc-600 hover:text-zinc-400 transition-colors p-1"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          ))}
+
+          <div className="flex items-center justify-between pt-2">
+            <span className="text-zinc-500 text-sm">
+              {selectedFiles.length} file{selectedFiles.length !== 1 ? "s" : ""} selected
+            </span>
+            {selectedSource ? (
+              <button
+                onClick={handleUpload}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg transition-colors"
+              >
+                Upload {selectedFiles.length > 1 ? `${selectedFiles.length} Files` : ""}
+              </button>
+            ) : (
+              <span className="text-zinc-500 text-sm">Select a source first</span>
+            )}
+          </div>
         </div>
       )}
 
-      <ImportProgress
-        status={uploadStatus}
-        result={importMutation.data}
-        error={
-          importMutation.error instanceof Error
-            ? importMutation.error.message
-            : undefined
-        }
-        fileName={selectedFile?.name}
-      />
+      <ImportProgress state={multiState} />
 
-      {importMutation.isSuccess && (
+      {isDone && (
         <button
           onClick={handleReset}
           className="mt-4 w-full py-2.5 text-sm font-medium text-zinc-400 hover:text-zinc-200 bg-zinc-800/50 hover:bg-zinc-800 rounded-lg transition-colors"
         >
-          Import Another File
+          Import More Files
         </button>
       )}
     </div>

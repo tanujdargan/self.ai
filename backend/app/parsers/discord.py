@@ -32,7 +32,7 @@ def parse_discord_channel(channel_dir: Path) -> dict[str, Any]:
     # -- channel metadata -----------------------------------------------------
     channel_path = channel_dir / "channel.json"
     if channel_path.exists():
-        with open(channel_path, "r", encoding="utf-8") as f:
+        with open(channel_path, "r", encoding="utf-8", errors="replace") as f:
             channel_meta = json.load(f)
         conversation_id = channel_meta.get("id", channel_dir.name)
     else:
@@ -40,7 +40,7 @@ def parse_discord_channel(channel_dir: Path) -> dict[str, Any]:
 
     # -- messages -------------------------------------------------------------
     messages_path = channel_dir / "messages.json"
-    with open(messages_path, "r", encoding="utf-8") as f:
+    with open(messages_path, "r", encoding="utf-8", errors="replace") as f:
         raw_messages: list[dict[str, Any]] = json.load(f)
 
     participants: set[str] = set()

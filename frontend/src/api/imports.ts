@@ -1,3 +1,4 @@
+import { useState, useCallback } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 export type Source = "whatsapp" | "instagram" | "discord" | "email" | "imessage";
@@ -53,6 +54,108 @@ export function useImportUpload() {
       queryClient.invalidateQueries({ queryKey: ["data-stats"] });
     },
   });
+}
+
+export type FileStatus = "pending" | "uploading" | "done" | "error";
+
+export interface FileUploadEntry {
+  file: File;
+  status: FileStatus;
+  result?: ImportResult;
+  error?: string;
+}
+
+export interface MultiImportState {
+  files: FileUploadEntry[];
+  currentIndex: number;
+  totalFiles: number;
+  isUploading: boolean;
+  totalMessages: number;
+  errorCount: number;
+}
+
+export function useMultiImportUpload() {
+  const queryClient = useQueryClient();
+  const [state, setState] = useState<MultiImportState>({
+    files: [],
+    currentIndex: 0,
+    totalFiles: 0,
+    isUploading: false,
+    totalMessages: 0,
+    errorCount: 0,
+  });
+
+  const upload = useCallback(
+    async (files: File[], source: Source) => {
+      const entries: FileUploadEntry[] = files.map((file) => ({
+        file,
+        status: "pending" as FileStatus,
+      }));
+
+      setState({
+        files: entries,
+        currentIndex: 0,
+        totalFiles: files.length,
+        isUploading: true,
+        totalMessages: 0,
+        errorCount: 0,
+      });
+
+      let totalMessages = 0;
+      let errorCount = 0;
+
+      for (let i = 0; i < files.length; i++) {
+        setState((prev) => ({
+          ...prev,
+          currentIndex: i,
+          files: prev.files.map((f, idx) =>
+            idx === i ? { ...f, status: "uploading" } : f
+          ),
+        }));
+
+        try {
+          const result = await uploadImport(files[i], source);
+          totalMessages += result.message_count;
+          setState((prev) => ({
+            ...prev,
+            totalMessages,
+            files: prev.files.map((f, idx) =>
+              idx === i ? { ...f, status: "done", result } : f
+            ),
+          }));
+        } catch (err) {
+          errorCount++;
+          const message =
+            err instanceof Error ? err.message : "Upload failed";
+          setState((prev) => ({
+            ...prev,
+            errorCount,
+            files: prev.files.map((f, idx) =>
+              idx === i ? { ...f, status: "error", error: message } : f
+            ),
+          }));
+        }
+      }
+
+      setState((prev) => ({ ...prev, isUploading: false }));
+      queryClient.invalidateQueries({ queryKey: ["conversations"] });
+      queryClient.invalidateQueries({ queryKey: ["data-stats"] });
+    },
+    [queryClient]
+  );
+
+  const reset = useCallback(() => {
+    setState({
+      files: [],
+      currentIndex: 0,
+      totalFiles: 0,
+      isUploading: false,
+      totalMessages: 0,
+      errorCount: 0,
+    });
+  }, []);
+
+  return { state, upload, reset };
 }
 
 export function useConversations() {

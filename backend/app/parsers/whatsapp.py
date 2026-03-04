@@ -108,7 +108,7 @@ def parse_whatsapp(path: Union[str, Path]) -> dict:
         messages         – list of message dicts {sender, timestamp, content, type}
     """
     path = Path(path)
-    text = path.read_text(encoding="utf-8")
+    text = path.read_text(encoding="utf-8", errors="replace")
     lines = text.splitlines()
 
     messages: list[dict] = []
