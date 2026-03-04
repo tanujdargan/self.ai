@@ -14,6 +14,16 @@ SELFAI_HOME="$HOME/.selfai"
 SELFAI_BIN="$HOME/.local/bin"
 REPO_URL="https://github.com/tanujdargan/self.ai.git"
 VERBOSE=false
+MIN_DISK_MB=5000
+
+# PyTorch CUDA wheel URLs — single source of truth (#10)
+TORCH_CU124="https://download.pytorch.org/whl/cu124"
+TORCH_CU121="https://download.pytorch.org/whl/cu121"
+TORCH_CU118="https://download.pytorch.org/whl/cu118"
+TORCH_ROCM="https://download.pytorch.org/whl/rocm6.0"
+
+# Max supported Python for PyTorch (#9 review)
+MAX_PYTHON_MINOR=13
 
 cleanup() {
     local exit_code=$?
@@ -32,45 +42,91 @@ step()  { echo -e "\n${BOLD}${CYAN}→ $*${NC}"; }
 
 # ---------------------------------------------------------------------------
 # Helpers
+# #1 fix: run pip in subshell to capture exit code cleanly (no pipefail toggle)
+# #4 fix: --allow-fail is a proper first-arg flag (not env var)
 # ---------------------------------------------------------------------------
 run_pip() {
+    local exit_code=0
     if [ "$VERBOSE" = true ]; then
-        pip "$@"
+        pip "$@" || exit_code=$?
     else
-        pip "$@" --quiet 2>&1 | tail -5 || true
+        # subshell captures pip's exit code without toggling pipefail
+        exit_code=$(pip "$@" --quiet 2>/dev/null; echo $?)
     fi
-    # check exit code of pip (not tail)
-    if [ "${PIPESTATUS[0]:-$?}" -ne 0 ]; then
-        fail "pip $1 failed. Re-run with verbose mode for details."
+    if [ "$exit_code" -ne 0 ]; then
+        fail "pip $1 failed (exit code $exit_code). Re-run with --verbose for details."
     fi
 }
 
 run_npm() {
-    local allow_fail="${ALLOW_FAIL:-false}"
+    local allow_fail=false
+    if [ "${1:-}" = "--allow-fail" ]; then
+        allow_fail=true
+        shift
+    fi
+    local exit_code=0
     if [ "$VERBOSE" = true ]; then
-        npm "$@" || { [ "$allow_fail" = true ] && return 1 || fail "npm $1 failed. Re-run with verbose mode for details."; }
+        npm "$@" || exit_code=$?
     else
-        npm "$@" --silent 2>&1 | tail -3 || { [ "$allow_fail" = true ] && return 1 || fail "npm $1 failed. Re-run with verbose mode for details."; }
+        exit_code=$(npm "$@" --silent 2>/dev/null; echo $?)
+    fi
+    if [ "$exit_code" -ne 0 ]; then
+        if [ "$allow_fail" = true ]; then
+            return 1
+        fi
+        fail "npm $1 failed (exit code $exit_code). Re-run with --verbose for details."
     fi
 }
 
 # ---------------------------------------------------------------------------
+# #2 fix: check multiple hosts + detect captive portals
+# ---------------------------------------------------------------------------
 check_network() {
     step "Checking network connectivity"
 
-    if command -v curl &>/dev/null; then
-        if curl -sf --max-time 10 -o /dev/null "https://pypi.org/simple/"; then
-            ok "Network reachable"
-            return
+    local check_url response
+    local reachable=0
+    for check_url in "https://pypi.org/simple/" "https://github.com" "https://download.pytorch.org"; do
+        if command -v curl &>/dev/null; then
+            response="$(curl -sf --max-time 10 "$check_url" 2>/dev/null | head -c 200)" || { warn "Cannot reach $check_url"; continue; }
+            # captive portal detection
+            if echo "$response" | grep -qi '<html' 2>/dev/null; then
+                warn "$check_url returned HTML — possible captive portal"
+                continue
+            fi
+            reachable=$((reachable + 1))
+        elif command -v wget &>/dev/null; then
+            wget -q --timeout=10 --spider "$check_url" 2>/dev/null && reachable=$((reachable + 1)) || warn "Cannot reach $check_url"
         fi
-    elif command -v wget &>/dev/null; then
-        if wget -q --timeout=10 --spider "https://pypi.org/simple/" 2>/dev/null; then
-            ok "Network reachable"
-            return
-        fi
-    fi
+    done
 
-    fail "No network connectivity. Check your internet connection and try again."
+    if [ "$reachable" -eq 0 ]; then
+        fail "No network connectivity. Check your internet connection and try again."
+    elif [ "$reachable" -lt 3 ]; then
+        warn "Some hosts unreachable — installation may fail at certain steps"
+    else
+        ok "Network reachable"
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# #3 fix: use df -Pk for portable single-line output
+# ---------------------------------------------------------------------------
+check_disk_space() {
+    step "Checking disk space"
+
+    local avail_kb
+    avail_kb="$(df -Pk "$HOME" 2>/dev/null | awk 'NR==2 {print $4}')" || true
+
+    if [ -n "$avail_kb" ]; then
+        local avail_mb=$((avail_kb / 1024))
+        if [ "$avail_mb" -lt "$MIN_DISK_MB" ]; then
+            fail "Insufficient disk space: ${avail_mb}MB available, ${MIN_DISK_MB}MB required (PyTorch alone is ~2GB)"
+        fi
+        ok "${avail_mb}MB available"
+    else
+        warn "Could not determine available disk space, continuing anyway"
+    fi
 }
 
 # ---------------------------------------------------------------------------
@@ -96,6 +152,8 @@ detect_platform() {
 }
 
 # ---------------------------------------------------------------------------
+# GPU detection — portable sed (no grep -P), correct version comparison
+# ---------------------------------------------------------------------------
 detect_gpu() {
     step "Detecting GPU"
 
@@ -113,9 +171,8 @@ detect_gpu() {
         local smi_output
         if smi_output="$(nvidia-smi 2>&1)"; then
             GPU="cuda"
-            # detect actual CUDA version
             local cuda_ver
-            cuda_ver="$(echo "$smi_output" | grep -oP 'CUDA Version:\s+\K[\d.]+' || true)"
+            cuda_ver="$(echo "$smi_output" | sed -n 's/.*CUDA Version:[[:space:]]*\([0-9]*\.[0-9]*\).*/\1/p' | head -1)"
 
             if [ -n "$cuda_ver" ]; then
                 local cuda_major cuda_minor
@@ -124,16 +181,17 @@ detect_gpu() {
                 cuda_minor="${cuda_minor%%.*}"
                 ok "NVIDIA GPU detected (CUDA $cuda_ver)"
 
-                if [ "$cuda_major" -ge 12 ] && [ "$cuda_minor" -ge 4 ]; then
-                    TORCH_INDEX="https://download.pytorch.org/whl/cu124"
-                elif [ "$cuda_major" -ge 12 ]; then
-                    TORCH_INDEX="https://download.pytorch.org/whl/cu121"
+                # use constants from top of file
+                if [ "$cuda_major" -gt 12 ] || { [ "$cuda_major" -eq 12 ] && [ "$cuda_minor" -ge 4 ]; }; then
+                    TORCH_INDEX="$TORCH_CU124"
+                elif [ "$cuda_major" -eq 12 ]; then
+                    TORCH_INDEX="$TORCH_CU121"
                 else
-                    TORCH_INDEX="https://download.pytorch.org/whl/cu118"
+                    TORCH_INDEX="$TORCH_CU118"
                 fi
             else
-                warn "nvidia-smi found but could not parse CUDA version, using cu121"
-                TORCH_INDEX="https://download.pytorch.org/whl/cu121"
+                warn "nvidia-smi found but could not parse CUDA version, defaulting to cu121"
+                TORCH_INDEX="$TORCH_CU121"
                 ok "NVIDIA GPU detected"
             fi
             return
@@ -146,7 +204,7 @@ detect_gpu() {
     if command -v rocm-smi &>/dev/null; then
         if rocm-smi &>/dev/null; then
             GPU="rocm"
-            TORCH_INDEX="https://download.pytorch.org/whl/rocm6.0"
+            TORCH_INDEX="$TORCH_ROCM"
             ok "AMD GPU detected (ROCm 6.0)"
             return
         else
@@ -158,6 +216,8 @@ detect_gpu() {
     warn "No GPU detected, installing CPU-only PyTorch"
 }
 
+# ---------------------------------------------------------------------------
+# #9 fix: warn on Python > MAX_PYTHON_MINOR (PyTorch compatibility)
 # ---------------------------------------------------------------------------
 check_python() {
     step "Checking Python"
@@ -183,6 +243,10 @@ check_python() {
 
     if [ "$major" -lt 3 ] || { [ "$major" -eq 3 ] && [ "$minor" -lt 10 ]; }; then
         fail "Python $ver found, but 3.10+ is required.\nInstall with pyenv:\n  curl https://pyenv.run | bash\n  pyenv install 3.12 && pyenv global 3.12"
+    fi
+
+    if [ "$major" -eq 3 ] && [ "$minor" -gt "$MAX_PYTHON_MINOR" ]; then
+        warn "Python $ver detected — PyTorch may not support versions above 3.$MAX_PYTHON_MINOR yet"
     fi
 
     ok "Python $ver ($($PYTHON --version 2>&1))"
@@ -296,7 +360,7 @@ setup_frontend() {
     run_npm install
     ok "npm packages installed"
 
-    if ALLOW_FAIL=true run_npm run build; then
+    if run_npm --allow-fail run build; then
         ok "Frontend built"
     else
         warn "Frontend build skipped (no build script or build failed)"
@@ -356,7 +420,15 @@ print_success() {
 }
 
 # ===========================================================================
+# #5/#8 fix: parse flags first, only prompt on real interactive TTY
+# ===========================================================================
 main() {
+    for arg in "$@"; do
+        case "$arg" in
+            -v|--verbose) VERBOSE=true ;;
+        esac
+    done
+
     echo -e "${BOLD}${CYAN}"
     echo "  ____       _  __           _ "
     echo " / ___|  ___| |/ _|   __ _ (_)"
@@ -368,20 +440,21 @@ main() {
     echo -e "${BOLD}  Local LLM Finetuning Platform${NC}"
     echo ""
 
-    # verbose flag: accept -v/--verbose arg or interactive prompt
-    if [[ "${1:-}" == "-v" || "${1:-}" == "--verbose" ]]; then
-        VERBOSE=true
-        ok "Verbose mode enabled"
-    elif [ -t 0 ]; then
+    # only prompt if both stdin AND stdout are a real terminal
+    if [ "$VERBOSE" = false ] && [ -t 0 ] && [ -t 1 ]; then
         read -rp "  Enable verbose output? (y/N) " choice
         if [[ "$choice" =~ ^[yY] ]]; then
             VERBOSE=true
-            ok "Verbose mode enabled"
         fi
+    fi
+
+    if [ "$VERBOSE" = true ]; then
+        ok "Verbose mode enabled"
     fi
     echo ""
 
     check_network
+    check_disk_space
     detect_platform
     detect_gpu
     check_python

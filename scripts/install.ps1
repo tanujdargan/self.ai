@@ -7,6 +7,15 @@ $SELFAI_HOME = "$env:USERPROFILE\.selfai"
 $REPO_URL = "https://github.com/tanujdargan/self.ai.git"
 $script:Verbose = $false
 $script:Unattended = [Environment]::GetCommandLineArgs() -contains "-NonInteractive"
+$MIN_DISK_GB = 5
+
+# PyTorch CUDA wheel URLs — single source of truth (#10)
+$TORCH_CU124 = "https://download.pytorch.org/whl/cu124"
+$TORCH_CU121 = "https://download.pytorch.org/whl/cu121"
+$TORCH_CU118 = "https://download.pytorch.org/whl/cu118"
+
+# Max supported Python for PyTorch (#9 review)
+$MAX_PYTHON_MINOR = 13
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -26,7 +35,7 @@ function Write-Fail($msg) {
 }
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Helpers — #6 fix: build complete arg list, only branch on output handling
 # ---------------------------------------------------------------------------
 function Test-Command($name) {
     return [bool](Get-Command $name -ErrorAction SilentlyContinue)
@@ -34,10 +43,11 @@ function Test-Command($name) {
 
 function Invoke-Pip {
     param([string[]]$Arguments)
+    $pipArgs = $Arguments + $(if (-not $script:Verbose) { @("--quiet") } else { @() })
     if ($script:Verbose) {
-        & pip @Arguments
+        & pip @pipArgs
     } else {
-        & pip @Arguments --quiet 2>&1 | Out-Null
+        & pip @pipArgs 2>&1 | Out-Null
     }
     if ($LASTEXITCODE -ne 0) {
         Write-Fail "pip $($Arguments[0]) failed (exit code $LASTEXITCODE). Re-run with verbose mode for details."
@@ -46,10 +56,11 @@ function Invoke-Pip {
 
 function Invoke-Npm {
     param([string[]]$Arguments, [switch]$AllowFail)
+    $npmArgs = $Arguments + $(if (-not $script:Verbose) { @("--silent") } else { @() })
     if ($script:Verbose) {
-        & npm @Arguments
+        & npm @npmArgs
     } else {
-        & npm @Arguments --silent 2>&1 | Out-Null
+        & npm @npmArgs 2>&1 | Out-Null
     }
     if ($LASTEXITCODE -ne 0 -and -not $AllowFail) {
         Write-Fail "npm $($Arguments[0]) failed (exit code $LASTEXITCODE). Re-run with verbose mode for details."
@@ -58,17 +69,75 @@ function Invoke-Npm {
 }
 
 # ---------------------------------------------------------------------------
+# #2 fix: check multiple hosts + detect captive portals
+# ---------------------------------------------------------------------------
 function Test-Network {
     Write-Step "Checking network connectivity"
 
-    try {
-        $null = Invoke-WebRequest -Uri "https://pypi.org/simple/" -Method Head -TimeoutSec 10 -UseBasicParsing -ErrorAction Stop
-        Write-Ok "Network reachable"
-    } catch {
+    $hosts = @("https://pypi.org/simple/", "https://github.com", "https://download.pytorch.org")
+    $reachable = 0
+
+    foreach ($url in $hosts) {
+        try {
+            $response = Invoke-WebRequest -Uri $url -Method Get -TimeoutSec 10 -UseBasicParsing -ErrorAction Stop
+            $body = $response.Content
+            if ($body -and $body.Length -gt 0 -and $body -match '(?i)<html') {
+                # pypi/github legitimately return HTML, only flag pytorch.org
+                if ($url -like "*pytorch*") {
+                    Write-Warn "$url returned HTML - possible captive portal"
+                    continue
+                }
+            }
+            $reachable++
+        } catch {
+            Write-Warn "Cannot reach $url"
+        }
+    }
+
+    if ($reachable -eq 0) {
         Write-Fail "No network connectivity. Check your internet connection and try again."
+    } elseif ($reachable -lt $hosts.Count) {
+        Write-Warn "Some hosts unreachable - installation may fail at certain steps"
+    } else {
+        Write-Ok "Network reachable"
     }
 }
 
+# ---------------------------------------------------------------------------
+# #8 fix: use WMI for disk space (works on UNC paths and network drives)
+# ---------------------------------------------------------------------------
+function Test-DiskSpace {
+    Write-Step "Checking disk space"
+
+    try {
+        $profilePath = $env:USERPROFILE
+        if ($profilePath -match '^([A-Za-z]):') {
+            $driveLetter = $Matches[1]
+            $disk = Get-PSDrive $driveLetter -ErrorAction Stop
+            $freeGB = [math]::Round($disk.Free / 1GB, 1)
+        } else {
+            # UNC path or network drive — use .NET to check
+            $driveInfo = [System.IO.DriveInfo]::GetDrives() | Where-Object { $profilePath.StartsWith($_.RootDirectory.FullName) } | Select-Object -First 1
+            if ($driveInfo) {
+                $freeGB = [math]::Round($driveInfo.AvailableFreeSpace / 1GB, 1)
+            } else {
+                Write-Warn "Could not determine available disk space for $profilePath, continuing anyway"
+                return
+            }
+        }
+
+        if ($freeGB -lt $MIN_DISK_GB) {
+            Write-Fail "Insufficient disk space: ${freeGB}GB available, ${MIN_DISK_GB}GB required (PyTorch alone is ~2GB)"
+        }
+        Write-Ok "${freeGB}GB available"
+    } catch {
+        Write-Warn "Could not determine available disk space, continuing anyway"
+    }
+}
+
+# ---------------------------------------------------------------------------
+# CUDA version logic: cudaMajor > 12 OR (== 12 AND minor >= 4)
+# Uses constants from top of file
 # ---------------------------------------------------------------------------
 function Get-GPU {
     Write-Step "Detecting GPU"
@@ -80,20 +149,19 @@ function Get-GPU {
                 Write-Warn "nvidia-smi found but failed: $smiOutput"
                 Write-Warn "Falling back to CPU (check your NVIDIA drivers)"
             } else {
-                # detect CUDA version from nvidia-smi output
                 $cudaMatch = [regex]::Match($smiOutput, 'CUDA Version:\s+(\d+)\.(\d+)')
                 if ($cudaMatch.Success) {
                     $cudaMajor = [int]$cudaMatch.Groups[1].Value
                     $cudaMinor = [int]$cudaMatch.Groups[2].Value
                     Write-Ok "NVIDIA GPU detected (CUDA $cudaMajor.$cudaMinor)"
 
-                    # pick the right PyTorch CUDA wheel index
-                    if ($cudaMajor -ge 12 -and $cudaMinor -ge 4) {
-                        return @{ Type = "cuda"; IndexUrl = "https://download.pytorch.org/whl/cu124" }
-                    } elseif ($cudaMajor -ge 12) {
-                        return @{ Type = "cuda"; IndexUrl = "https://download.pytorch.org/whl/cu121" }
+                    # cu124 for CUDA >= 12.4, cu121 for CUDA 12.0-12.3, cu118 for older
+                    if ($cudaMajor -gt 12 -or ($cudaMajor -eq 12 -and $cudaMinor -ge 4)) {
+                        return @{ Type = "cuda"; IndexUrl = $TORCH_CU124 }
+                    } elseif ($cudaMajor -eq 12) {
+                        return @{ Type = "cuda"; IndexUrl = $TORCH_CU121 }
                     } else {
-                        return @{ Type = "cuda"; IndexUrl = "https://download.pytorch.org/whl/cu118" }
+                        return @{ Type = "cuda"; IndexUrl = $TORCH_CU118 }
                     }
                 } else {
                     Write-Warn "nvidia-smi found but could not parse CUDA version"
@@ -110,6 +178,8 @@ function Get-GPU {
     return @{ Type = "cpu"; IndexUrl = "" }
 }
 
+# ---------------------------------------------------------------------------
+# #9 fix: warn on Python > MAX_PYTHON_MINOR
 # ---------------------------------------------------------------------------
 function Test-Python {
     Write-Step "Checking Python"
@@ -133,6 +203,10 @@ function Test-Python {
 
     if ($major -lt 3 -or ($major -eq 3 -and $minor -lt 10)) {
         Write-Fail "Python $ver found, but 3.10+ required. Download from https://www.python.org/downloads/"
+    }
+
+    if ($major -eq 3 -and $minor -gt $MAX_PYTHON_MINOR) {
+        Write-Warn "Python $ver detected - PyTorch may not support versions above 3.$MAX_PYTHON_MINOR yet"
     }
 
     Write-Ok "Python $ver"
@@ -203,6 +277,8 @@ function Get-RepoDir {
 }
 
 # ---------------------------------------------------------------------------
+# #7/#10 fix: use -CommandType Function for explicit deactivate check
+# ---------------------------------------------------------------------------
 function Install-Backend($repoDir, $py, $gpu) {
     Write-Step "Setting up backend"
 
@@ -244,7 +320,9 @@ function Install-Backend($repoDir, $py, $gpu) {
         Write-Warn "No requirements.txt found, skipping"
     }
 
-    deactivate
+    if (Get-Command -Name deactivate -CommandType Function -ErrorAction SilentlyContinue) {
+        deactivate
+    }
     Pop-Location
 }
 
@@ -355,6 +433,7 @@ function Main {
     }
 
     Test-Network
+    Test-DiskSpace
     $gpu = Get-GPU
     $py = Test-Python
     Test-Node
