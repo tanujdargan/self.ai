@@ -1,7 +1,17 @@
 @echo off
 setlocal enabledelayedexpansion
 
-set "SELFAI_DIR=%~dp0.."
+:: Find the repo — check common locations
+if exist "%~dp0..\backend\app\main.py" (
+    set "SELFAI_DIR=%~dp0.."
+) else if exist "%USERPROFILE%\self.ai\backend\app\main.py" (
+    set "SELFAI_DIR=%USERPROFILE%\self.ai"
+) else (
+    echo Error: Cannot find Self.ai repository.
+    echo Expected at %USERPROFILE%\self.ai
+    goto :eof
+)
+
 set "SELFAI_PORT=8420"
 set "PIDFILE=%USERPROFILE%\.selfai\selfai.pid"
 
@@ -24,7 +34,22 @@ goto usage
     )
 
     pushd "%SELFAI_DIR%\backend"
+
+    if not exist ".venv\Scripts\activate.bat" (
+        echo Error: Virtual environment not found at %SELFAI_DIR%\backend\.venv
+        echo Run the installer first.
+        popd
+        goto :eof
+    )
     call .venv\Scripts\activate.bat
+
+    where uvicorn >nul 2>&1
+    if !errorlevel! neq 0 (
+        echo Error: uvicorn not found. Backend dependencies may not be installed.
+        echo Run the installer first.
+        popd
+        goto :eof
+    )
 
     start /b "" uvicorn app.main:app --host 127.0.0.1 --port %SELFAI_PORT%
     timeout /t 2 /nobreak >nul
