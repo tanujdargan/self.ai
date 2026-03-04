@@ -149,10 +149,6 @@ function Install-Backend($repoDir, $py, $gpu) {
     $origEAP = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
 
-    Write-Host "  Upgrading pip..." -ForegroundColor Blue
-    & pip install --upgrade pip --quiet 2>&1 | Out-Null
-    if ($LASTEXITCODE -ne 0) { Write-Warn "pip upgrade returned exit code $LASTEXITCODE, continuing..." }
-
     Write-Host "  Installing PyTorch ($($gpu.Type))..." -ForegroundColor Blue
     if ($gpu.IndexUrl) {
         & pip install torch --index-url $gpu.IndexUrl --quiet 2>&1 | Out-Null

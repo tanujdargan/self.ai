@@ -178,9 +178,6 @@ setup_backend() {
 
     source .venv/bin/activate
 
-    log "Upgrading pip..."
-    pip install --upgrade pip --quiet
-
     if [ -n "$TORCH_INDEX" ]; then
         log "Installing PyTorch ($GPU)..."
         pip install torch --index-url "$TORCH_INDEX" --quiet
