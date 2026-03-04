@@ -13,6 +13,7 @@ SELFAI_PORT=8420
 SELFAI_HOME="$HOME/.selfai"
 SELFAI_BIN="$HOME/.local/bin"
 REPO_URL="https://github.com/tanujdargan/self.ai.git"
+VERBOSE=false
 
 cleanup() {
     local exit_code=$?
@@ -28,6 +29,49 @@ ok()    { echo -e "${GREEN}  ✓${NC} $*"; }
 warn()  { echo -e "${YELLOW}  ⚠${NC} $*"; }
 fail()  { echo -e "${RED}  ✗ $*${NC}" >&2; exit 1; }
 step()  { echo -e "\n${BOLD}${CYAN}→ $*${NC}"; }
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+run_pip() {
+    if [ "$VERBOSE" = true ]; then
+        pip "$@"
+    else
+        pip "$@" --quiet 2>&1 | tail -5 || true
+    fi
+    # check exit code of pip (not tail)
+    if [ "${PIPESTATUS[0]:-$?}" -ne 0 ]; then
+        fail "pip $1 failed. Re-run with verbose mode for details."
+    fi
+}
+
+run_npm() {
+    local allow_fail="${ALLOW_FAIL:-false}"
+    if [ "$VERBOSE" = true ]; then
+        npm "$@" || { [ "$allow_fail" = true ] && return 1 || fail "npm $1 failed. Re-run with verbose mode for details."; }
+    else
+        npm "$@" --silent 2>&1 | tail -3 || { [ "$allow_fail" = true ] && return 1 || fail "npm $1 failed. Re-run with verbose mode for details."; }
+    fi
+}
+
+# ---------------------------------------------------------------------------
+check_network() {
+    step "Checking network connectivity"
+
+    if command -v curl &>/dev/null; then
+        if curl -sf --max-time 10 -o /dev/null "https://pypi.org/simple/"; then
+            ok "Network reachable"
+            return
+        fi
+    elif command -v wget &>/dev/null; then
+        if wget -q --timeout=10 --spider "https://pypi.org/simple/" 2>/dev/null; then
+            ok "Network reachable"
+            return
+        fi
+    fi
+
+    fail "No network connectivity. Check your internet connection and try again."
+}
 
 # ---------------------------------------------------------------------------
 detect_platform() {
@@ -65,22 +109,53 @@ detect_gpu() {
         return
     fi
 
-    if command -v nvidia-smi &>/dev/null && nvidia-smi &>/dev/null; then
-        GPU="cuda"
-        TORCH_INDEX="https://download.pytorch.org/whl/cu121"
-        ok "NVIDIA GPU detected (CUDA 12.1)"
-        return
+    if command -v nvidia-smi &>/dev/null; then
+        local smi_output
+        if smi_output="$(nvidia-smi 2>&1)"; then
+            GPU="cuda"
+            # detect actual CUDA version
+            local cuda_ver
+            cuda_ver="$(echo "$smi_output" | grep -oP 'CUDA Version:\s+\K[\d.]+' || true)"
+
+            if [ -n "$cuda_ver" ]; then
+                local cuda_major cuda_minor
+                cuda_major="${cuda_ver%%.*}"
+                cuda_minor="${cuda_ver#*.}"
+                cuda_minor="${cuda_minor%%.*}"
+                ok "NVIDIA GPU detected (CUDA $cuda_ver)"
+
+                if [ "$cuda_major" -ge 12 ] && [ "$cuda_minor" -ge 4 ]; then
+                    TORCH_INDEX="https://download.pytorch.org/whl/cu124"
+                elif [ "$cuda_major" -ge 12 ]; then
+                    TORCH_INDEX="https://download.pytorch.org/whl/cu121"
+                else
+                    TORCH_INDEX="https://download.pytorch.org/whl/cu118"
+                fi
+            else
+                warn "nvidia-smi found but could not parse CUDA version, using cu121"
+                TORCH_INDEX="https://download.pytorch.org/whl/cu121"
+                ok "NVIDIA GPU detected"
+            fi
+            return
+        else
+            warn "nvidia-smi found but failed: $smi_output"
+            warn "Falling back to CPU (check your NVIDIA drivers)"
+        fi
     fi
 
-    if command -v rocm-smi &>/dev/null && rocm-smi &>/dev/null; then
-        GPU="rocm"
-        TORCH_INDEX="https://download.pytorch.org/whl/rocm6.0"
-        ok "AMD GPU detected (ROCm 6.0)"
-        return
+    if command -v rocm-smi &>/dev/null; then
+        if rocm-smi &>/dev/null; then
+            GPU="rocm"
+            TORCH_INDEX="https://download.pytorch.org/whl/rocm6.0"
+            ok "AMD GPU detected (ROCm 6.0)"
+            return
+        else
+            warn "rocm-smi found but failed. Falling back to CPU."
+        fi
     fi
 
     TORCH_INDEX=""
-    warn "No GPU detected, falling back to CPU"
+    warn "No GPU detected, installing CPU-only PyTorch"
 }
 
 # ---------------------------------------------------------------------------
@@ -170,6 +245,12 @@ setup_backend() {
 
     cd "$SELFAI_DIR/backend"
 
+    # wipe broken venv on retry
+    if [ -d ".venv" ] && [ ! -f ".venv/bin/python" ]; then
+        warn "Removing broken virtual environment..."
+        rm -rf .venv
+    fi
+
     if [ ! -d ".venv" ]; then
         log "Creating virtual environment..."
         $PYTHON -m venv .venv
@@ -180,19 +261,19 @@ setup_backend() {
 
     if [ -n "$TORCH_INDEX" ]; then
         log "Installing PyTorch ($GPU)..."
-        pip install torch --index-url "$TORCH_INDEX" --quiet
+        run_pip install torch --index-url "$TORCH_INDEX"
     else
-        log "Installing PyTorch (MPS / default)..."
-        pip install torch --quiet
+        log "Installing PyTorch ($GPU)..."
+        run_pip install torch
     fi
     ok "PyTorch installed"
 
     if [ -f "requirements.txt" ]; then
         log "Installing backend dependencies..."
-        pip install -r requirements.txt --quiet
+        run_pip install -r requirements.txt
         ok "Backend dependencies installed"
     else
-        warn "No requirements.txt found, skipping pip install -r"
+        warn "No requirements.txt found, skipping"
     fi
 
     deactivate
@@ -212,10 +293,10 @@ setup_frontend() {
     fi
 
     log "Installing frontend dependencies..."
-    npm install --silent 2>&1 | tail -1 || npm install
+    run_npm install
     ok "npm packages installed"
 
-    if npm run build --if-present 2>/dev/null; then
+    if ALLOW_FAIL=true run_npm run build; then
         ok "Frontend built"
     else
         warn "Frontend build skipped (no build script or build failed)"
@@ -287,6 +368,20 @@ main() {
     echo -e "${BOLD}  Local LLM Finetuning Platform${NC}"
     echo ""
 
+    # verbose flag: accept -v/--verbose arg or interactive prompt
+    if [[ "${1:-}" == "-v" || "${1:-}" == "--verbose" ]]; then
+        VERBOSE=true
+        ok "Verbose mode enabled"
+    elif [ -t 0 ]; then
+        read -rp "  Enable verbose output? (y/N) " choice
+        if [[ "$choice" =~ ^[yY] ]]; then
+            VERBOSE=true
+            ok "Verbose mode enabled"
+        fi
+    fi
+    echo ""
+
+    check_network
     detect_platform
     detect_gpu
     check_python

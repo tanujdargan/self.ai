@@ -1,26 +1,72 @@
 #Requires -Version 5.1
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
-$ErrorActionPreference = "Stop"
+$ErrorActionPreference = "Continue"
 
 $SELFAI_PORT = 8420
 $SELFAI_HOME = "$env:USERPROFILE\.selfai"
 $REPO_URL = "https://github.com/tanujdargan/self.ai.git"
-$Verbose = $false
+$script:Verbose = $false
+$script:Unattended = [Environment]::GetCommandLineArgs() -contains "-NonInteractive"
 
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
 function Write-Step($msg)  { Write-Host "`n-> $msg" -ForegroundColor Cyan }
 function Write-Ok($msg)    { Write-Host "  + $msg" -ForegroundColor Green }
 function Write-Warn($msg)  { Write-Host "  ! $msg" -ForegroundColor Yellow }
+
 function Write-Fail($msg) {
     Write-Host "  x $msg" -ForegroundColor Red
-    Write-Host ""
-    Write-Host "  Press Enter to exit..." -ForegroundColor Yellow
-    Read-Host
+    if (-not $script:Unattended) {
+        Write-Host ""
+        Write-Host "  Press Enter to exit..." -ForegroundColor Yellow
+        Read-Host
+    }
     exit 1
 }
 
 # ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 function Test-Command($name) {
     return [bool](Get-Command $name -ErrorAction SilentlyContinue)
+}
+
+function Invoke-Pip {
+    param([string[]]$Arguments)
+    if ($script:Verbose) {
+        & pip @Arguments
+    } else {
+        & pip @Arguments --quiet 2>&1 | Out-Null
+    }
+    if ($LASTEXITCODE -ne 0) {
+        Write-Fail "pip $($Arguments[0]) failed (exit code $LASTEXITCODE). Re-run with verbose mode for details."
+    }
+}
+
+function Invoke-Npm {
+    param([string[]]$Arguments, [switch]$AllowFail)
+    if ($script:Verbose) {
+        & npm @Arguments
+    } else {
+        & npm @Arguments --silent 2>&1 | Out-Null
+    }
+    if ($LASTEXITCODE -ne 0 -and -not $AllowFail) {
+        Write-Fail "npm $($Arguments[0]) failed (exit code $LASTEXITCODE). Re-run with verbose mode for details."
+    }
+    return $LASTEXITCODE
+}
+
+# ---------------------------------------------------------------------------
+function Test-Network {
+    Write-Step "Checking network connectivity"
+
+    try {
+        $null = Invoke-WebRequest -Uri "https://pypi.org/simple/" -Method Head -TimeoutSec 10 -UseBasicParsing -ErrorAction Stop
+        Write-Ok "Network reachable"
+    } catch {
+        Write-Fail "No network connectivity. Check your internet connection and try again."
+    }
 }
 
 # ---------------------------------------------------------------------------
@@ -29,13 +75,38 @@ function Get-GPU {
 
     if (Test-Command "nvidia-smi") {
         try {
-            $null = & nvidia-smi 2>&1
-            Write-Ok "NVIDIA GPU detected (CUDA 12.1)"
-            return @{ Type = "cuda"; IndexUrl = "https://download.pytorch.org/whl/cu121" }
-        } catch {}
+            $smiOutput = & nvidia-smi 2>&1
+            if ($LASTEXITCODE -ne 0) {
+                Write-Warn "nvidia-smi found but failed: $smiOutput"
+                Write-Warn "Falling back to CPU (check your NVIDIA drivers)"
+            } else {
+                # detect CUDA version from nvidia-smi output
+                $cudaMatch = [regex]::Match($smiOutput, 'CUDA Version:\s+(\d+)\.(\d+)')
+                if ($cudaMatch.Success) {
+                    $cudaMajor = [int]$cudaMatch.Groups[1].Value
+                    $cudaMinor = [int]$cudaMatch.Groups[2].Value
+                    Write-Ok "NVIDIA GPU detected (CUDA $cudaMajor.$cudaMinor)"
+
+                    # pick the right PyTorch CUDA wheel index
+                    if ($cudaMajor -ge 12 -and $cudaMinor -ge 4) {
+                        return @{ Type = "cuda"; IndexUrl = "https://download.pytorch.org/whl/cu124" }
+                    } elseif ($cudaMajor -ge 12) {
+                        return @{ Type = "cuda"; IndexUrl = "https://download.pytorch.org/whl/cu121" }
+                    } else {
+                        return @{ Type = "cuda"; IndexUrl = "https://download.pytorch.org/whl/cu118" }
+                    }
+                } else {
+                    Write-Warn "nvidia-smi found but could not parse CUDA version"
+                    Write-Warn "Falling back to CPU"
+                }
+            }
+        } catch {
+            Write-Warn "nvidia-smi threw an exception: $_"
+            Write-Warn "Falling back to CPU (check your NVIDIA drivers)"
+        }
     }
 
-    Write-Warn "No GPU detected, falling back to CPU"
+    Write-Warn "No GPU detected, installing CPU-only PyTorch"
     return @{ Type = "cpu"; IndexUrl = "" }
 }
 
@@ -126,6 +197,7 @@ function Get-RepoDir {
 
     Write-Host "  Cloning repository..." -ForegroundColor Blue
     & git clone $REPO_URL $target
+    if ($LASTEXITCODE -ne 0) { Write-Fail "git clone failed" }
     Write-Ok "Cloned to $target"
     return $target
 }
@@ -138,52 +210,41 @@ function Install-Backend($repoDir, $py, $gpu) {
     Push-Location $backendDir
 
     $venvDir = Join-Path $backendDir ".venv"
+
+    # wipe broken venv on retry
+    if ((Test-Path $venvDir) -and -not (Test-Path (Join-Path $venvDir "Scripts\python.exe"))) {
+        Write-Warn "Removing broken virtual environment..."
+        Remove-Item -Recurse -Force $venvDir
+    }
+
     if (-not (Test-Path $venvDir)) {
         Write-Host "  Creating virtual environment..." -ForegroundColor Blue
         & $py -m venv .venv
+        if ($LASTEXITCODE -ne 0) { Write-Fail "Failed to create virtual environment" }
     }
     Write-Ok "Virtual environment ready"
 
     $activate = Join-Path $venvDir "Scripts\Activate.ps1"
-    & $activate
-
-    $origEAP = $ErrorActionPreference
-    $ErrorActionPreference = "Continue"
+    . $activate
 
     Write-Host "  Installing PyTorch ($($gpu.Type))..." -ForegroundColor Blue
-    if ($script:Verbose) {
-        if ($gpu.IndexUrl) {
-            & pip install torch --index-url $gpu.IndexUrl
-        } else {
-            & pip install torch
-        }
+    if ($gpu.IndexUrl) {
+        Invoke-Pip -Arguments @("install", "torch", "--index-url", $gpu.IndexUrl)
     } else {
-        if ($gpu.IndexUrl) {
-            & pip install torch --index-url $gpu.IndexUrl --quiet 2>&1 | Out-Null
-        } else {
-            & pip install torch --quiet 2>&1 | Out-Null
-        }
+        Invoke-Pip -Arguments @("install", "torch")
     }
-    if ($LASTEXITCODE -ne 0) { Write-Fail "PyTorch installation failed (exit code $LASTEXITCODE)" }
     Write-Ok "PyTorch installed"
 
     $reqFile = Join-Path $backendDir "requirements.txt"
     if (Test-Path $reqFile) {
         Write-Host "  Installing backend dependencies..." -ForegroundColor Blue
-        if ($script:Verbose) {
-            & pip install -r requirements.txt
-        } else {
-            & pip install -r requirements.txt --quiet 2>&1 | Out-Null
-        }
-        if ($LASTEXITCODE -ne 0) { Write-Fail "Backend dependency installation failed (exit code $LASTEXITCODE)" }
+        Invoke-Pip -Arguments @("install", "-r", "requirements.txt")
         Write-Ok "Backend dependencies installed"
     } else {
         Write-Warn "No requirements.txt found, skipping"
     }
 
-    $ErrorActionPreference = $origEAP
-
-    & deactivate
+    deactivate
     Pop-Location
 }
 
@@ -200,30 +261,18 @@ function Install-Frontend($repoDir) {
     }
 
     Push-Location $frontendDir
-    $origEAP = $ErrorActionPreference
-    $ErrorActionPreference = "Continue"
 
     Write-Host "  Installing frontend dependencies..." -ForegroundColor Blue
-    if ($script:Verbose) {
-        & npm install
-    } else {
-        & npm install --silent 2>&1 | Out-Null
-    }
-    if ($LASTEXITCODE -ne 0) { Write-Fail "npm install failed (exit code $LASTEXITCODE)" }
+    Invoke-Npm -Arguments @("install")
     Write-Ok "npm packages installed"
 
-    if ($script:Verbose) {
-        & npm run build 2>&1
-    } else {
-        & npm run build 2>&1 | Out-Null
-    }
-    if ($LASTEXITCODE -eq 0) {
+    $buildExit = Invoke-Npm -Arguments @("run", "build") -AllowFail
+    if ($buildExit -eq 0) {
         Write-Ok "Frontend built"
     } else {
-        Write-Warn "Frontend build skipped"
+        Write-Warn "Frontend build skipped (no build script or build failed)"
     }
 
-    $ErrorActionPreference = $origEAP
     Pop-Location
 }
 
@@ -296,13 +345,16 @@ function Main {
     Write-Host "  Local LLM Finetuning Platform" -ForegroundColor White
     Write-Host ""
 
-    $choice = Read-Host "  Enable verbose output? (y/N)"
-    if ($choice -match '^[yY]') {
-        $script:Verbose = $true
-        Write-Ok "Verbose mode enabled"
+    if (-not $script:Unattended) {
+        $choice = Read-Host "  Enable verbose output? (y/N)"
+        if ($choice -match '^[yY]') {
+            $script:Verbose = $true
+            Write-Ok "Verbose mode enabled"
+        }
+        Write-Host ""
     }
-    Write-Host ""
 
+    Test-Network
     $gpu = Get-GPU
     $py = Test-Python
     Test-Node
@@ -320,8 +372,10 @@ try {
 } catch {
     Write-Host ""
     Write-Host "  x Installation failed: $_" -ForegroundColor Red
-    Write-Host ""
-    Write-Host "  Press Enter to exit..." -ForegroundColor Yellow
-    Read-Host
+    if (-not $script:Unattended) {
+        Write-Host ""
+        Write-Host "  Press Enter to exit..." -ForegroundColor Yellow
+        Read-Host
+    }
     exit 1
 }
