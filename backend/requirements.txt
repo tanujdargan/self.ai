@@ -1,7 +1,22 @@
+# API
 fastapi>=0.115.0
 uvicorn[standard]>=0.30.0
 pydantic-settings>=2.0.0
 aiosqlite>=0.20.0
 python-multipart>=0.0.9
+
+# Parsing
 email-reply-parser>=0.5.0
+
+# System
 psutil>=5.9.0
+
+# Training (torch is installed separately by the install script for GPU support)
+transformers>=4.45.0
+peft>=0.13.0
+datasets>=3.0.0
+accelerate>=1.0.0
+bitsandbytes>=0.44.0
+
+# Inference
+llama-cpp-python>=0.3.0
