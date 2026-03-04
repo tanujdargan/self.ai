@@ -8,20 +8,31 @@ from datetime import datetime
 from pathlib import Path
 from typing import Union
 
-# Matches lines like:
-#   MM/DD/YY, H:MM AM/PM - Sender: Message       (12h US format)
-#   DD/MM/YY, H:MM AM/PM - Sender: Message        (12h non-US)
-#   DD/MM/YY, HH:MM - Sender: Message             (24h format)
-#   [DD/MM/YY, HH:MM:SS] Sender: Message          (bracket format)
-_TIMESTAMP_RE = re.compile(
-    r"^"
-    r"(?:\[?)?"                         # optional opening bracket
+# Strip unicode control characters that WhatsApp embeds (LTR mark, narrow NBSP, etc.)
+_UNICODE_JUNK = re.compile(r"[\u200e\u200f\u202a-\u202e\u2066-\u2069\u00a0\u202f]")
+
+# Format A (slash dates):  MM/DD/YY, H:MM AM - Sender: Message
+#                          DD/MM/YY, HH:MM - Sender: Message
+#                          [DD/MM/YY, HH:MM:SS] Sender: Message
+_TIMESTAMP_SLASH_RE = re.compile(
+    r"^\[?"
     r"(\d{1,2}/\d{1,2}/\d{2,4})"       # date  (group 1)
     r",\s+"
     r"(\d{1,2}:\d{2}(?::\d{2})?)"      # time  (group 2)
     r"(?:\s*(AM|PM))?"                  # optional AM/PM (group 3)
-    r"(?:\]?)?"                         # optional closing bracket
-    r"\s*-\s+"                          # separator dash
+    r"\]?"
+    r"\s*[-\]]\s*"                      # separator: dash or closing bracket
+    r"(.+)"                             # rest  (group 4)
+)
+
+# Format B (ISO dates):  [2023-01-24, 3:26:27 AM] Sender: Message
+_TIMESTAMP_ISO_RE = re.compile(
+    r"^\[?"
+    r"(\d{4}-\d{2}-\d{2})"             # date YYYY-MM-DD (group 1)
+    r",\s+"
+    r"(\d{1,2}:\d{2}(?::\d{2})?)"      # time  (group 2)
+    r"(?:\s*(AM|PM))?"                  # optional AM/PM (group 3)
+    r"\]?\s+"
     r"(.+)"                             # rest  (group 4)
 )
 
@@ -40,30 +51,40 @@ _SYSTEM_PATTERNS = [
     "message timer was",
     "security code changed",
     "tap to learn more",
+    "changed their phone number",
+    "you deleted this message",
+    "this message was deleted",
+    "you blocked this contact",
+    "you unblocked this contact",
 ]
 
-_MEDIA_MARKER = "<media omitted>"
+_MEDIA_MARKERS = {"<media omitted>", "image omitted", "video omitted", "audio omitted",
+                   "sticker omitted", "document omitted", "gif omitted", "contact card omitted"}
 
 
 def _parse_timestamp(date_str: str, time_str: str, ampm: str | None) -> datetime:
     """Parse the date and time parts into a datetime object.
 
-    Tries MM/DD/YY first; if the month value exceeds 12 falls back to DD/MM/YY.
+    Handles both slash formats (MM/DD/YY, DD/MM/YY) and ISO format (YYYY-MM-DD).
     """
-    parts = date_str.split("/")
-    a, b, year = int(parts[0]), int(parts[1]), parts[2]
-
-    # Normalise 2-digit year
-    if len(year) == 2:
-        year = "20" + year
-
     # Build time string
     if ampm:
-        time_fmt = "%I:%M %p" if ":" in time_str and time_str.count(":") == 1 else "%I:%M:%S %p"
+        time_fmt = "%I:%M %p" if time_str.count(":") == 1 else "%I:%M:%S %p"
         full_time = f"{time_str} {ampm}"
     else:
         time_fmt = "%H:%M" if time_str.count(":") == 1 else "%H:%M:%S"
         full_time = time_str
+
+    # ISO format: YYYY-MM-DD
+    if "-" in date_str:
+        return datetime.strptime(f"{date_str} {full_time}", f"%Y-%m-%d {time_fmt}")
+
+    # Slash format
+    parts = date_str.split("/")
+    a, b, year = int(parts[0]), int(parts[1]), parts[2]
+
+    if len(year) == 2:
+        year = "20" + year
 
     # Try MM/DD first
     if a <= 12:
@@ -114,8 +135,12 @@ def parse_whatsapp(path: Union[str, Path]) -> dict:
     messages: list[dict] = []
     participants: set[str] = set()
 
-    for line in lines:
-        m = _TIMESTAMP_RE.match(line)
+    for raw_line in lines:
+        # Strip invisible unicode control characters that WhatsApp embeds
+        line = _UNICODE_JUNK.sub("", raw_line).strip()
+
+        # Try both timestamp formats
+        m = _TIMESTAMP_SLASH_RE.match(line) or _TIMESTAMP_ISO_RE.match(line)
         if m:
             date_str, time_str, ampm, rest = m.groups()
 
@@ -125,14 +150,22 @@ def parse_whatsapp(path: Union[str, Path]) -> dict:
 
             parts = _split_sender_body(rest)
             if parts is None:
-                # System message without recognisable sender
                 continue
 
             sender, body = parts
+
+            # Strip LTR marks from body too
+            body = body.strip()
+
+            # Skip system messages that appear after the sender
+            if _is_system_message(body):
+                continue
+
             ts = _parse_timestamp(date_str, time_str, ampm)
 
             # Determine message type
-            if body.strip().lower() == _MEDIA_MARKER:
+            body_lower = body.lower()
+            if body_lower in _MEDIA_MARKERS or body_lower.startswith("<attached:"):
                 msg_type = "media"
             else:
                 msg_type = "text"
@@ -149,7 +182,7 @@ def parse_whatsapp(path: Union[str, Path]) -> dict:
         else:
             # Continuation line for a multiline message
             if messages:
-                messages[-1]["content"] += "\n" + line
+                messages[-1]["content"] += "\n" + raw_line
 
     conversation_id = hashlib.sha256(str(path.resolve()).encode()).hexdigest()[:16]
 
