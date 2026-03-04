@@ -9,10 +9,11 @@ $script:Verbose = $false
 $script:Unattended = [Environment]::GetCommandLineArgs() -contains "-NonInteractive"
 $MIN_DISK_GB = 5
 
-# PyTorch CUDA wheel URLs — single source of truth (#10)
-$TORCH_CU124 = "https://download.pytorch.org/whl/cu124"
-$TORCH_CU121 = "https://download.pytorch.org/whl/cu121"
-$TORCH_CU118 = "https://download.pytorch.org/whl/cu118"
+# PyTorch CUDA wheel URLs — single source of truth
+# See https://pytorch.org/get-started/locally/ for current versions
+$TORCH_CU130 = "https://download.pytorch.org/whl/cu130"
+$TORCH_CU128 = "https://download.pytorch.org/whl/cu128"
+$TORCH_CU126 = "https://download.pytorch.org/whl/cu126"
 
 # Max supported Python for PyTorch (#9 review)
 $MAX_PYTHON_MINOR = 13
@@ -155,13 +156,16 @@ function Get-GPU {
                     $cudaMinor = [int]$cudaMatch.Groups[2].Value
                     Write-Ok "NVIDIA GPU detected (CUDA $cudaMajor.$cudaMinor)"
 
-                    # cu124 for CUDA >= 12.4, cu121 for CUDA 12.0-12.3, cu118 for older
-                    if ($cudaMajor -gt 12 -or ($cudaMajor -eq 12 -and $cudaMinor -ge 4)) {
-                        return @{ Type = "cuda"; IndexUrl = $TORCH_CU124 }
+                    # match to nearest supported PyTorch CUDA wheel
+                    if ($cudaMajor -ge 13) {
+                        return @{ Type = "cuda"; IndexUrl = $TORCH_CU130 }
+                    } elseif ($cudaMajor -eq 12 -and $cudaMinor -ge 8) {
+                        return @{ Type = "cuda"; IndexUrl = $TORCH_CU128 }
                     } elseif ($cudaMajor -eq 12) {
-                        return @{ Type = "cuda"; IndexUrl = $TORCH_CU121 }
+                        return @{ Type = "cuda"; IndexUrl = $TORCH_CU126 }
                     } else {
-                        return @{ Type = "cuda"; IndexUrl = $TORCH_CU118 }
+                        Write-Warn "CUDA $cudaMajor.$cudaMinor is too old for current PyTorch, trying cu126"
+                        return @{ Type = "cuda"; IndexUrl = $TORCH_CU126 }
                     }
                 } else {
                     Write-Warn "nvidia-smi found but could not parse CUDA version"

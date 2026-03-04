@@ -16,11 +16,12 @@ REPO_URL="https://github.com/tanujdargan/self.ai.git"
 VERBOSE=false
 MIN_DISK_MB=5000
 
-# PyTorch CUDA wheel URLs — single source of truth (#10)
-TORCH_CU124="https://download.pytorch.org/whl/cu124"
-TORCH_CU121="https://download.pytorch.org/whl/cu121"
-TORCH_CU118="https://download.pytorch.org/whl/cu118"
-TORCH_ROCM="https://download.pytorch.org/whl/rocm6.0"
+# PyTorch CUDA wheel URLs — single source of truth
+# See https://pytorch.org/get-started/locally/ for current versions
+TORCH_CU130="https://download.pytorch.org/whl/cu130"
+TORCH_CU128="https://download.pytorch.org/whl/cu128"
+TORCH_CU126="https://download.pytorch.org/whl/cu126"
+TORCH_ROCM="https://download.pytorch.org/whl/rocm7.1"
 
 # Max supported Python for PyTorch (#9 review)
 MAX_PYTHON_MINOR=13
@@ -181,17 +182,20 @@ detect_gpu() {
                 cuda_minor="${cuda_minor%%.*}"
                 ok "NVIDIA GPU detected (CUDA $cuda_ver)"
 
-                # use constants from top of file
-                if [ "$cuda_major" -gt 12 ] || { [ "$cuda_major" -eq 12 ] && [ "$cuda_minor" -ge 4 ]; }; then
-                    TORCH_INDEX="$TORCH_CU124"
+                # match to nearest supported PyTorch CUDA wheel
+                if [ "$cuda_major" -ge 13 ]; then
+                    TORCH_INDEX="$TORCH_CU130"
+                elif [ "$cuda_major" -eq 12 ] && [ "$cuda_minor" -ge 8 ]; then
+                    TORCH_INDEX="$TORCH_CU128"
                 elif [ "$cuda_major" -eq 12 ]; then
-                    TORCH_INDEX="$TORCH_CU121"
+                    TORCH_INDEX="$TORCH_CU126"
                 else
-                    TORCH_INDEX="$TORCH_CU118"
+                    warn "CUDA $cuda_ver is too old for current PyTorch, trying cu126"
+                    TORCH_INDEX="$TORCH_CU126"
                 fi
             else
-                warn "nvidia-smi found but could not parse CUDA version, defaulting to cu121"
-                TORCH_INDEX="$TORCH_CU121"
+                warn "nvidia-smi found but could not parse CUDA version, defaulting to cu126"
+                TORCH_INDEX="$TORCH_CU126"
                 ok "NVIDIA GPU detected"
             fi
             return
