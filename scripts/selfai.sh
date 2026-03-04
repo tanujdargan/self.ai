@@ -52,7 +52,40 @@ case "${1:-start}" in
             echo "Self.ai is not running"
         fi
         ;;
+    update)
+        WAS_RUNNING=false
+        if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+            WAS_RUNNING=true
+            echo "Stopping Self.ai before update..."
+            kill "$(cat "$PIDFILE")"
+            rm -f "$PIDFILE"
+        fi
+
+        cd "$SELFAI_DIR"
+
+        echo "Pulling latest changes..."
+        git pull --ff-only || { echo "Error: git pull failed. You may have local changes — commit or stash them first."; exit 1; }
+
+        echo "Updating backend dependencies..."
+        cd "$SELFAI_DIR/backend"
+        source .venv/bin/activate
+        pip install -q -r requirements.txt
+
+        if [ -f "$SELFAI_DIR/frontend/package.json" ]; then
+            echo "Updating frontend..."
+            cd "$SELFAI_DIR/frontend"
+            npm install --silent
+            npm run build
+        fi
+
+        echo "Update complete."
+
+        if [ "$WAS_RUNNING" = true ]; then
+            echo "Restarting Self.ai..."
+            exec "$0" start
+        fi
+        ;;
     *)
-        echo "Usage: selfai [start|stop|status]"
+        echo "Usage: selfai [start|stop|status|update]"
         ;;
 esac

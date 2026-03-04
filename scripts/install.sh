@@ -416,8 +416,9 @@ print_success() {
     echo -e "  Port:      ${BOLD}$SELFAI_PORT${NC}"
     echo ""
     echo -e "  ${CYAN}Next steps:${NC}"
-    echo -e "    ${BOLD}selfai start${NC}    Launch Self.ai"
-    echo -e "    ${BOLD}selfai stop${NC}     Stop the server"
+    echo -e "    ${BOLD}selfai start${NC}     Launch Self.ai"
+    echo -e "    ${BOLD}selfai stop${NC}      Stop the server"
+    echo -e "    ${BOLD}selfai update${NC}    Pull latest changes"
     echo ""
 }
 

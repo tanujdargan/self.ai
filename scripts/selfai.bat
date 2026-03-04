@@ -19,6 +19,7 @@ if "%~1"=="" goto start
 if /i "%~1"=="start" goto start
 if /i "%~1"=="stop" goto stop
 if /i "%~1"=="status" goto status
+if /i "%~1"=="update" goto update
 goto usage
 
 :start
@@ -95,6 +96,53 @@ goto usage
     )
     goto :eof
 
+:update
+    set "WAS_RUNNING=false"
+    if exist "%PIDFILE%" (
+        set /p PID=<"%PIDFILE%"
+        tasklist /FI "PID eq !PID!" 2>nul | find /i "python" >nul
+        if !errorlevel! equ 0 (
+            set "WAS_RUNNING=true"
+            echo Stopping Self.ai before update...
+            taskkill /PID !PID! /F >nul 2>&1
+            del "%PIDFILE%" >nul 2>&1
+        )
+    )
+
+    pushd "%SELFAI_DIR%"
+
+    echo Pulling latest changes...
+    git pull --ff-only
+    if !errorlevel! neq 0 (
+        echo Error: git pull failed. You may have local changes — commit or stash them first.
+        popd
+        goto :eof
+    )
+
+    echo Updating backend dependencies...
+    pushd "%SELFAI_DIR%\backend"
+    call .venv\Scripts\activate.bat
+    pip install -q -r requirements.txt
+    popd
+
+    if exist "%SELFAI_DIR%\frontend\package.json" (
+        echo Updating frontend...
+        pushd "%SELFAI_DIR%\frontend"
+        call npm install --silent
+        call npm run build
+        popd
+    )
+
+    popd
+
+    echo Update complete.
+
+    if "!WAS_RUNNING!"=="true" (
+        echo Restarting Self.ai...
+        goto start
+    )
+    goto :eof
+
 :usage
-    echo Usage: selfai [start^|stop^|status]
+    echo Usage: selfai [start^|stop^|status^|update]
     goto :eof
