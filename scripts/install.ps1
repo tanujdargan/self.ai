@@ -146,8 +146,12 @@ function Install-Backend($repoDir, $py, $gpu) {
     $activate = Join-Path $venvDir "Scripts\Activate.ps1"
     & $activate
 
+    $origEAP = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+
     Write-Host "  Upgrading pip..." -ForegroundColor Blue
     & pip install --upgrade pip --quiet 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) { Write-Warn "pip upgrade returned exit code $LASTEXITCODE, continuing..." }
 
     Write-Host "  Installing PyTorch ($($gpu.Type))..." -ForegroundColor Blue
     if ($gpu.IndexUrl) {
@@ -155,16 +159,20 @@ function Install-Backend($repoDir, $py, $gpu) {
     } else {
         & pip install torch --quiet 2>&1 | Out-Null
     }
+    if ($LASTEXITCODE -ne 0) { Write-Fail "PyTorch installation failed (exit code $LASTEXITCODE)" }
     Write-Ok "PyTorch installed"
 
     $reqFile = Join-Path $backendDir "requirements.txt"
     if (Test-Path $reqFile) {
         Write-Host "  Installing backend dependencies..." -ForegroundColor Blue
         & pip install -r requirements.txt --quiet 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) { Write-Fail "Backend dependency installation failed (exit code $LASTEXITCODE)" }
         Write-Ok "Backend dependencies installed"
     } else {
         Write-Warn "No requirements.txt found, skipping"
     }
+
+    $ErrorActionPreference = $origEAP
 
     & deactivate
     Pop-Location
@@ -183,18 +191,22 @@ function Install-Frontend($repoDir) {
     }
 
     Push-Location $frontendDir
+    $origEAP = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
 
     Write-Host "  Installing frontend dependencies..." -ForegroundColor Blue
     & npm install --silent 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) { Write-Fail "npm install failed (exit code $LASTEXITCODE)" }
     Write-Ok "npm packages installed"
 
-    try {
-        & npm run build 2>&1 | Out-Null
+    & npm run build 2>&1 | Out-Null
+    if ($LASTEXITCODE -eq 0) {
         Write-Ok "Frontend built"
-    } catch {
+    } else {
         Write-Warn "Frontend build skipped"
     }
 
+    $ErrorActionPreference = $origEAP
     Pop-Location
 }
 
