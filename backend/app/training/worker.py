@@ -173,7 +173,7 @@ def train(config: dict):
         use_gradient_checkpointing = False
 
         if device_type == "cuda":
-            vram_gb = torch.cuda.get_device_properties(0).total_mem / (1024**3)
+            vram_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
             wlog.info("VRAM: %.1f GB", vram_gb)
 
             # Enable gradient checkpointing — essential for QLoRA on consumer GPUs
