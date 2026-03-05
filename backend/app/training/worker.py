@@ -28,6 +28,15 @@ def train(config: dict):
     log({"event": "start", "message": "Loading model and tokenizer..."})
 
     try:
+        # Authenticate with HuggingFace for gated models
+        hf_token = config.get("hf_token")
+        if hf_token:
+            from huggingface_hub import login
+            login(token=hf_token, add_to_git_credential=False)
+            wlog.info("Logged in to HuggingFace")
+        else:
+            wlog.warning("No HF token provided — gated models will fail")
+
         import torch
         from transformers import (
             AutoModelForCausalLM,
@@ -76,10 +85,12 @@ def train(config: dict):
             device_map="auto" if device_type == "cuda" else None,
             torch_dtype=torch.float16 if device_type != "cpu" else torch.float32,
             cache_dir=config.get("cache_dir"),
+            token=hf_token,
         )
         tokenizer = AutoTokenizer.from_pretrained(
             config["base_model"],
             cache_dir=config.get("cache_dir"),
+            token=hf_token,
         )
         if tokenizer.pad_token is None:
             tokenizer.pad_token = tokenizer.eos_token

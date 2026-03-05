@@ -110,6 +110,54 @@ export function useStorageStats() {
   });
 }
 
+export interface HfTokenStatus {
+  has_token: boolean;
+  masked: string | null;
+}
+
+export function useHfToken() {
+  return useQuery<HfTokenStatus>({
+    queryKey: ["hf-token"],
+    queryFn: async () => {
+      const res = await fetch("/api/system/hf-token");
+      if (!res.ok) throw new Error("Failed to fetch HF token status");
+      return res.json();
+    },
+  });
+}
+
+export function useSaveHfToken() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (token: string) => {
+      const res = await fetch("/api/system/hf-token", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token }),
+      });
+      if (!res.ok) throw new Error("Failed to save token");
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["hf-token"] });
+    },
+  });
+}
+
+export function useDeleteHfToken() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/system/hf-token", { method: "DELETE" });
+      if (!res.ok) throw new Error("Failed to delete token");
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["hf-token"] });
+    },
+  });
+}
+
 export function useDeleteAllData() {
   const queryClient = useQueryClient();
   return useMutation({

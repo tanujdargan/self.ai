@@ -11,6 +11,7 @@ import {
   useCancelTraining,
   useTrainingProgress,
 } from "../api/training";
+import { useHfToken } from "../api/models";
 import type { TrainingConfig } from "../api/training";
 
 function getPresetOverrides(preset: PresetName): Partial<TrainingConfig> {
@@ -61,6 +62,7 @@ export function TrainPage() {
   const [runId, setRunId] = useState<string | null>(null);
 
   const hardware = useHardware();
+  const hfToken = useHfToken();
   const selfNameQuery = useSelfName();
   const startTraining = useStartTraining();
 
@@ -189,6 +191,12 @@ export function TrainPage() {
           <AdvancedSettings config={config} onChange={updateConfig} />
 
           <div className="space-y-3">
+            {!hfToken.isLoading && !hfToken.data?.has_token && (
+              <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-sm text-amber-300">
+                No HuggingFace token set. Most models (Llama, Mistral, etc.) require authentication.{" "}
+                <a href="/settings" className="underline hover:text-amber-200">Add your token in Settings</a>.
+              </div>
+            )}
             {startTraining.error && (
               <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-sm text-red-300">
                 {startTraining.error.message}

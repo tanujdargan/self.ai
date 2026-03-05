@@ -61,6 +61,18 @@ def detect_self_name(conversations: list[dict]) -> str | None:
     return name
 
 
+async def _get_hf_token() -> str | None:
+    """Read HuggingFace token from DB settings."""
+    from app.db.database import get_db
+    db = await get_db()
+    try:
+        cursor = await db.execute("SELECT value FROM app_settings WHERE key = 'hf_token'")
+        row = await cursor.fetchone()
+        return row["value"] if row else None
+    finally:
+        await db.close()
+
+
 async def start_training(config: dict) -> dict:
     """Prepare training data from parsed conversations and spawn worker.
 
@@ -107,6 +119,14 @@ async def start_training(config: dict) -> dict:
     config["data_path"] = str(data_path)
     config["data_format"] = "style"
 
+    # Inject HF token for gated model access
+    hf_token = await _get_hf_token()
+    if hf_token:
+        config["hf_token"] = hf_token
+        logger.info("HF token found, passing to worker")
+    else:
+        logger.warning("No HF token configured — gated models will fail to download")
+
     worker_path = Path(__file__).parent / "worker.py"
 
     process = subprocess.Popen(
@@ -130,53 +150,77 @@ async def start_training(config: dict) -> dict:
     return {"run_id": run_id, "detected_self_name": self_name}
 
 
+async def _read_stdout(run_id: str, process: subprocess.Popen, loop: asyncio.AbstractEventLoop):
+    """Read structured JSON events from worker stdout and forward to subscribers."""
+    while True:
+        line = await loop.run_in_executor(None, process.stdout.readline)
+        if not line:
+            break
+        line = line.strip()
+        try:
+            data = json.loads(line)
+            data["run_id"] = run_id
+            logger.debug("Worker[%s]: %s", run_id, data.get("event", "?"))
+            for queue in _job_subscribers.get(run_id, []):
+                await queue.put(data)
+        except json.JSONDecodeError:
+            logger.info("Worker[%s] stdout: %s", run_id, line)
+
+
+async def _read_stderr(run_id: str, process: subprocess.Popen, loop: asyncio.AbstractEventLoop) -> list[str]:
+    """Stream worker stderr lines to the server log and forward status updates to frontend."""
+    lines: list[str] = []
+    while True:
+        line = await loop.run_in_executor(None, process.stderr.readline)
+        if not line:
+            break
+        line = line.rstrip()
+        lines.append(line)
+        logger.info("Worker[%s] stderr: %s", run_id, line)
+
+        # Forward download/loading progress to frontend as status updates
+        lower = line.lower()
+        if any(kw in lower for kw in ("downloading", "loading", "tokenizer", "fetching", "model.safetensors")):
+            for queue in _job_subscribers.get(run_id, []):
+                await queue.put({
+                    "run_id": run_id,
+                    "event": "progress",
+                    "message": line.strip(),
+                    "percent": 5,
+                })
+    return lines
+
+
 async def _monitor_job(run_id: str, process: subprocess.Popen):
     try:
         loop = asyncio.get_event_loop()
-        while True:
-            line = await loop.run_in_executor(None, process.stdout.readline)
-            if not line:
-                break
-            line = line.strip()
-            try:
-                data = json.loads(line)
-                data["run_id"] = run_id
-                logger.debug("Worker[%s]: %s", run_id, data.get("event", "?"))
-                for queue in _job_subscribers.get(run_id, []):
-                    await queue.put(data)
-            except json.JSONDecodeError:
-                # Non-JSON output from worker — log it instead of silently dropping
-                logger.info("Worker[%s] stdout: %s", run_id, line)
+
+        # Read stdout and stderr in parallel so neither blocks the other
+        stdout_task = asyncio.create_task(_read_stdout(run_id, process, loop))
+        stderr_task = asyncio.create_task(_read_stderr(run_id, process, loop))
+
+        await stdout_task
+        # Give stderr a moment to finish after stdout closes
+        try:
+            stderr_lines = await asyncio.wait_for(stderr_task, timeout=10.0)
+        except asyncio.TimeoutError:
+            logger.warning("Worker[%s] stderr read timed out", run_id)
+            stderr_lines = []
 
         process.wait()
 
-        # Capture stderr for crash diagnostics (timeout prevents hang if process was killed)
-        stderr_output = ""
-        if process.stderr:
-            try:
-                stderr_output = await asyncio.wait_for(
-                    loop.run_in_executor(None, process.stderr.read), timeout=5.0
-                )
-            except asyncio.TimeoutError:
-                logger.warning("Worker[%s] stderr read timed out", run_id)
         if process.returncode != 0:
             logger.error("Worker[%s] exited with code %d", run_id, process.returncode)
-            if stderr_output:
-                logger.error("Worker[%s] stderr:\n%s", run_id, stderr_output)
         else:
             logger.info("Worker[%s] finished successfully", run_id)
-            if stderr_output:
-                logger.debug("Worker[%s] stderr:\n%s", run_id, stderr_output)
 
         final = {
             "run_id": run_id,
             "event": "finished",
             "return_code": process.returncode,
         }
-        if process.returncode != 0 and stderr_output:
-            # Send last few lines of stderr to frontend as error context
-            last_lines = stderr_output.strip().splitlines()[-5:]
-            final["stderr"] = "\n".join(last_lines)
+        if process.returncode != 0 and stderr_lines:
+            final["stderr"] = "\n".join(stderr_lines[-10:])
         for queue in _job_subscribers.get(run_id, []):
             await queue.put(final)
 

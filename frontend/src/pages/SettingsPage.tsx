@@ -1,10 +1,14 @@
 import { useState } from "react";
-import { useHardware, useStorageStats, useDeleteAllData } from "../api/models";
+import { useHardware, useStorageStats, useDeleteAllData, useHfToken, useSaveHfToken, useDeleteHfToken } from "../api/models";
 
 export function SettingsPage() {
   const { data: hardware, isLoading: hwLoading } = useHardware();
   const { data: stats, isLoading: statsLoading } = useStorageStats();
   const deleteAll = useDeleteAllData();
+  const hfToken = useHfToken();
+  const saveHfToken = useSaveHfToken();
+  const deleteHfToken = useDeleteHfToken();
+  const [tokenInput, setTokenInput] = useState("");
   const [copied, setCopied] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
@@ -47,6 +51,51 @@ export function SettingsPage() {
         </section>
 
         <section className="bg-zinc-900 border border-zinc-800 rounded-xl p-5 animate-fade-in-up stagger-2">
+          <h2 className="text-sm font-medium text-zinc-400 mb-2">HuggingFace Token</h2>
+          <p className="text-xs text-zinc-500 mb-3">
+            Required to download gated models like Llama. Get yours at{" "}
+            <a href="https://huggingface.co/settings/tokens" target="_blank" rel="noreferrer" className="text-blue-400 hover:underline">
+              huggingface.co/settings/tokens
+            </a>
+          </p>
+          {hfToken.data?.has_token ? (
+            <div className="flex items-center gap-2">
+              <code className="flex-1 px-3 py-2 rounded-lg bg-zinc-800 text-zinc-200 text-sm font-mono">
+                {hfToken.data.masked}
+              </code>
+              <button
+                onClick={() => deleteHfToken.mutate()}
+                disabled={deleteHfToken.isPending}
+                className="px-3 py-2 rounded-lg bg-red-500/10 text-red-400 hover:bg-red-500/20 text-sm font-medium transition-colors"
+              >
+                Remove
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2">
+              <input
+                type="password"
+                value={tokenInput}
+                onChange={(e) => setTokenInput(e.target.value)}
+                placeholder="hf_..."
+                className="flex-1 px-3 py-2 rounded-lg bg-zinc-800 border border-zinc-700 text-zinc-200 text-sm font-mono placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500"
+              />
+              <button
+                onClick={() => {
+                  if (tokenInput.trim()) {
+                    saveHfToken.mutate(tokenInput.trim(), { onSuccess: () => setTokenInput("") });
+                  }
+                }}
+                disabled={!tokenInput.trim() || saveHfToken.isPending}
+                className="px-3 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-500 text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {saveHfToken.isPending ? "Saving..." : "Save"}
+              </button>
+            </div>
+          )}
+        </section>
+
+        <section className="bg-zinc-900 border border-zinc-800 rounded-xl p-5 animate-fade-in-up stagger-3">
           <h2 className="text-sm font-medium text-zinc-400 mb-3">Hardware</h2>
           {hwLoading && <p className="text-zinc-500 text-sm">Loading...</p>}
           {hardware && (
@@ -61,7 +110,7 @@ export function SettingsPage() {
           )}
         </section>
 
-        <section className="bg-zinc-900 border border-zinc-800 rounded-xl p-5 animate-fade-in-up stagger-3">
+        <section className="bg-zinc-900 border border-zinc-800 rounded-xl p-5 animate-fade-in-up stagger-4">
           <h2 className="text-sm font-medium text-zinc-400 mb-3">Storage</h2>
           {statsLoading && <p className="text-zinc-500 text-sm">Loading...</p>}
           {stats && (
@@ -79,7 +128,7 @@ export function SettingsPage() {
           )}
         </section>
 
-        <section className="bg-zinc-900 border border-red-500/20 rounded-xl p-5 animate-fade-in-up stagger-4">
+        <section className="bg-zinc-900 border border-red-500/20 rounded-xl p-5 animate-fade-in-up stagger-5">
           <h2 className="text-sm font-medium text-red-400 mb-2">Danger Zone</h2>
           <p className="text-zinc-500 text-sm mb-4">
             Permanently delete all imported data, conversations, and trained models. This cannot be undone.
