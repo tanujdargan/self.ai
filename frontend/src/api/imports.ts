@@ -36,8 +36,8 @@ async function uploadImport(file: File, source: Source): Promise<ImportResult> {
   });
 
   if (!res.ok) {
-    const err = await res.text();
-    throw new Error(err || "Upload failed");
+    const body = await res.json().catch(() => null);
+    throw new Error(body?.detail || "Upload failed");
   }
 
   return res.json();

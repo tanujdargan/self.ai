@@ -57,6 +57,20 @@ async def upload_chat(
     if source not in PARSERS and source not in ("discord", "imessage"):
         raise HTTPException(400, f"Unsupported source: {source}")
 
+    # Check for duplicate import
+    db = await get_db()
+    try:
+        cursor = await db.execute(
+            "SELECT COUNT(*) as cnt FROM conversations WHERE file_name = ? AND source = ?",
+            (file.filename, source),
+        )
+        row = await cursor.fetchone()
+        if row["cnt"] > 0:
+            logger.info("Duplicate import skipped: %s (%s) already imported", file.filename, source)
+            raise HTTPException(409, f"'{file.filename}' has already been imported as {source}. Delete existing data first to re-import.")
+    finally:
+        await db.close()
+
     # Save uploaded file
     import_id = uuid4().hex[:12]
     save_dir = settings.imports_dir / import_id
