@@ -1,4 +1,5 @@
 import json
+import logging
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
@@ -6,15 +7,23 @@ from fastapi.responses import JSONResponse
 from app.models.schemas import TrainingConfig
 from app.training.manager import cancel_training, start_training, subscribe, unsubscribe
 
+logger = logging.getLogger("selfai.train")
+
 router = APIRouter(tags=["training"])
 
 
 @router.post("/api/train")
 async def begin_training(config: TrainingConfig):
+    logger.info("Training requested: mode=%s model=%s self_name=%s", config.mode, config.base_model, config.self_name)
     try:
         result = await start_training(config.model_dump())
     except ValueError as e:
+        logger.warning("Training rejected: %s", e)
         return JSONResponse(status_code=422, content={"detail": str(e)})
+    except Exception:
+        logger.exception("Training start failed unexpectedly")
+        return JSONResponse(status_code=500, content={"detail": "Internal error starting training. Check server logs."})
+    logger.info("Training started: run_id=%s self_name=%s", result["run_id"], result["detected_self_name"])
     return {
         "run_id": result["run_id"],
         "status": "started",

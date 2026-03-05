@@ -1,4 +1,6 @@
 import json
+import logging
+import traceback
 import zipfile
 from datetime import datetime, timezone
 from uuid import uuid4
@@ -7,6 +9,8 @@ from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 
 from app.config import settings
 from app.db.database import get_db
+
+logger = logging.getLogger("selfai.import")
 from app.parsers.whatsapp import parse_whatsapp
 from app.parsers.instagram import parse_instagram, parse_instagram_multi
 from app.parsers.discord import parse_discord_channel
@@ -48,6 +52,8 @@ async def upload_chat(
     file: UploadFile = File(...),
     source: str = Form(...),
 ):
+    logger.info("Import request: source=%s file=%s size=%s", source, file.filename, file.size)
+
     if source not in PARSERS and source not in ("discord", "imessage"):
         raise HTTPException(400, f"Unsupported source: {source}")
 
@@ -86,6 +92,7 @@ async def upload_chat(
     except HTTPException:
         raise
     except Exception as e:
+        logger.error("Parse failed for %s (%s): %s\n%s", file.filename, source, e, traceback.format_exc())
         raise HTTPException(422, f"Failed to parse: {str(e)}")
 
     # Save parsed result
@@ -108,6 +115,9 @@ async def upload_chat(
         await db.commit()
     finally:
         await db.close()
+
+    logger.info("Import complete: id=%s source=%s file=%s messages=%d convos=%d",
+                import_id, source, file.filename, total_messages, len(convos))
 
     return {
         "import_id": import_id,

@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import subprocess
 import sys
 from collections import Counter
@@ -8,6 +9,8 @@ from uuid import uuid4
 
 from app.config import settings
 from app.services.data_formatter import format_for_style
+
+logger = logging.getLogger("selfai.train")
 
 # Active training processes
 _active_jobs: dict[str, subprocess.Popen] = {}
@@ -37,6 +40,7 @@ def load_parsed_conversations() -> list[dict]:
             conversations.extend(data)
         else:
             conversations.append(data)
+    logger.debug("Loaded %d conversations from %s", len(conversations), parsed_dir)
     return conversations
 
 
@@ -52,7 +56,9 @@ def detect_self_name(conversations: list[dict]) -> str | None:
             convo_participants[name] += 1
     if not convo_participants:
         return None
-    return convo_participants.most_common(1)[0][0]
+    name = convo_participants.most_common(1)[0][0]
+    logger.debug("Auto-detected self_name=%s (top 5: %s)", name, convo_participants.most_common(5))
+    return name
 
 
 async def start_training(config: dict) -> dict:
@@ -71,6 +77,8 @@ async def start_training(config: dict) -> dict:
         raise ValueError("Could not detect your name. Import conversations with participants.")
 
     training_examples = format_for_style(conversations, self_name)
+    logger.info("Formatted %d training examples for self_name=%s from %d conversations",
+                len(training_examples), self_name, len(conversations))
     if not training_examples:
         raise ValueError(
             f"No training examples generated for '{self_name}'. "
@@ -105,6 +113,8 @@ async def start_training(config: dict) -> dict:
     process.stdin.close()
 
     _active_jobs[run_id] = process
+    logger.info("Worker spawned: run_id=%s pid=%d data_path=%s examples=%d",
+                run_id, process.pid, data_path, len(training_examples))
 
     # Start monitoring in background
     asyncio.create_task(_monitor_job(run_id, process))
@@ -119,23 +129,46 @@ async def _monitor_job(run_id: str, process: subprocess.Popen):
             line = await loop.run_in_executor(None, process.stdout.readline)
             if not line:
                 break
+            line = line.strip()
             try:
-                data = json.loads(line.strip())
+                data = json.loads(line)
                 data["run_id"] = run_id
+                logger.debug("Worker[%s]: %s", run_id, data.get("event", "?"))
                 for queue in _job_subscribers.get(run_id, []):
                     await queue.put(data)
             except json.JSONDecodeError:
-                continue
+                # Non-JSON output from worker — log it instead of silently dropping
+                logger.info("Worker[%s] stdout: %s", run_id, line)
 
         process.wait()
+
+        # Capture stderr for crash diagnostics
+        stderr_output = ""
+        if process.stderr:
+            stderr_output = await loop.run_in_executor(None, process.stderr.read)
+        if process.returncode != 0:
+            logger.error("Worker[%s] exited with code %d", run_id, process.returncode)
+            if stderr_output:
+                logger.error("Worker[%s] stderr:\n%s", run_id, stderr_output)
+        else:
+            logger.info("Worker[%s] finished successfully", run_id)
+            if stderr_output:
+                logger.debug("Worker[%s] stderr:\n%s", run_id, stderr_output)
+
         final = {
             "run_id": run_id,
             "event": "finished",
             "return_code": process.returncode,
         }
+        if process.returncode != 0 and stderr_output:
+            # Send last few lines of stderr to frontend as error context
+            last_lines = stderr_output.strip().splitlines()[-5:]
+            final["stderr"] = "\n".join(last_lines)
         for queue in _job_subscribers.get(run_id, []):
             await queue.put(final)
 
+    except Exception:
+        logger.exception("Monitor task crashed for run_id=%s", run_id)
     finally:
         _active_jobs.pop(run_id, None)
 

@@ -1,14 +1,27 @@
 """Training worker -- runs as a subprocess.
 
 Reads config from stdin (JSON), writes progress to stdout (JSON lines).
+Structured events go to stdout, human-readable debug info goes to stderr.
 """
 import json
+import logging
 import sys
 from pathlib import Path
 
+# stderr logging for debug info captured by the manager
+logging.basicConfig(
+    level=logging.DEBUG,
+    format="%(asctime)s %(levelname)-8s [worker] %(message)s",
+    datefmt="%H:%M:%S",
+    stream=sys.stderr,
+)
+wlog = logging.getLogger("worker")
+
 
 def log(data: dict):
+    """Send structured JSON event to stdout (read by manager)."""
     print(json.dumps(data), flush=True)
+    wlog.debug("event=%s %s", data.get("event", "?"), data.get("message", ""))
 
 
 def train(config: dict):
@@ -180,10 +193,15 @@ def train(config: dict):
         log({"event": "complete", "message": "Training complete!", "percent": 100, "output_dir": output_dir})
 
     except Exception as e:
+        wlog.exception("Training failed")
         log({"event": "error", "message": str(e)})
         sys.exit(1)
 
 
 if __name__ == "__main__":
-    config = json.loads(sys.stdin.read())
+    raw = sys.stdin.read()
+    wlog.info("Worker started, config length=%d bytes", len(raw))
+    config = json.loads(raw)
+    wlog.info("Config: mode=%s model=%s data_path=%s",
+              config.get("mode"), config.get("base_model"), config.get("data_path"))
     train(config)

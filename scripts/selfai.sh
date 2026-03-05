@@ -15,7 +15,7 @@ case "${1:-start}" in
 
         cd "$SELFAI_DIR/backend"
         source .venv/bin/activate
-        uvicorn app.main:app --host 127.0.0.1 --port "$SELFAI_PORT" &
+        uvicorn app.main:app --host 127.0.0.1 --port "$SELFAI_PORT" --log-level info &
         PID=$!
         echo "$PID" > "$PIDFILE"
 

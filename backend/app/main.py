@@ -1,8 +1,11 @@
+import logging
+import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
@@ -15,13 +18,30 @@ from app.routers.openai_compat import router as openai_router
 from app.routers.system import router as system_router
 from app.routers.training import router as training_router
 
+# ---------------------------------------------------------------------------
+# Logging setup
+# ---------------------------------------------------------------------------
+LOG_FORMAT = "%(asctime)s %(levelname)-8s [%(name)s] %(message)s"
+logging.basicConfig(
+    level=logging.DEBUG,
+    format=LOG_FORMAT,
+    datefmt="%H:%M:%S",
+    stream=sys.stderr,
+)
+# Quiet noisy third-party loggers
+for noisy in ("httpcore", "httpx", "multipart", "urllib3", "aiosqlite"):
+    logging.getLogger(noisy).setLevel(logging.WARNING)
+
+logger = logging.getLogger("selfai")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings.ensure_dirs()
     await init_db()
+    logger.info("Self.ai started — data: %s", settings.data_dir)
     yield
-    # TODO: cleanup
+    logger.info("Self.ai shutting down")
 
 
 app = FastAPI(title=settings.app_name, lifespan=lifespan)
@@ -36,6 +56,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    logger.exception("Unhandled error on %s %s", request.method, request.url.path)
+    return JSONResponse(status_code=500, content={"detail": str(exc)})
 
 
 app.include_router(chat_router)

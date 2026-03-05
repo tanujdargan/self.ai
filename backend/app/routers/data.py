@@ -1,7 +1,10 @@
 import json
+import logging
 import shutil
 from fastapi import APIRouter
 from app.config import settings
+
+logger = logging.getLogger("selfai.data")
 from app.db.database import get_db
 from app.training.manager import load_parsed_conversations, detect_self_name
 
@@ -86,6 +89,7 @@ async def wipe_all_data():
         await db.execute("DELETE FROM training_runs")
         await db.execute("DELETE FROM conversations")
         await db.commit()
+        logger.info("All data wiped")
         return {"status": "wiped"}
     finally:
         await db.close()
