@@ -1,3 +1,4 @@
+import json
 import shutil
 from fastapi import APIRouter
 from app.config import settings
@@ -50,7 +51,13 @@ async def list_conversations():
     db = await get_db()
     try:
         cursor = await db.execute("SELECT * FROM conversations ORDER BY imported_at DESC")
-        return [dict(r) for r in await cursor.fetchall()]
+        rows = []
+        for r in await cursor.fetchall():
+            row = dict(r)
+            row["participants"] = json.loads(row.pop("participants_json", "[]"))
+            row.pop("participant_self", None)
+            rows.append(row)
+        return rows
     finally:
         await db.close()
 

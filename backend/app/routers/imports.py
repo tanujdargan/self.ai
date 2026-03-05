@@ -1,10 +1,12 @@
 import json
 import zipfile
+from datetime import datetime, timezone
 from uuid import uuid4
 
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 
 from app.config import settings
+from app.db.database import get_db
 from app.parsers.whatsapp import parse_whatsapp
 from app.parsers.instagram import parse_instagram, parse_instagram_multi
 from app.parsers.discord import parse_discord_channel
@@ -90,6 +92,22 @@ async def upload_chat(
     parsed_path = settings.parsed_dir / f"{import_id}.json"
     parsed_data = result if not isinstance(result, list) else result
     parsed_path.write_text(json.dumps(parsed_data, indent=2, default=str))
+
+    # Persist to DB for import history
+    convos = result if isinstance(result, list) else [result]
+    db = await get_db()
+    try:
+        now = datetime.now(timezone.utc).isoformat()
+        for convo in convos:
+            participants = convo.get("participants", [])
+            msg_count = len(convo.get("messages", []))
+            await db.execute(
+                "INSERT INTO conversations (id, source, file_name, participant_self, participants_json, message_count, imported_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (uuid4().hex[:12], source, file.filename, "", json.dumps(participants), msg_count, now),
+            )
+        await db.commit()
+    finally:
+        await db.close()
 
     return {
         "import_id": import_id,

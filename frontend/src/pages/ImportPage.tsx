@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { FileDropZone } from "../components/FileDropZone.tsx";
 import { ImportProgress } from "../components/ImportProgress.tsx";
-import { useMultiImportUpload } from "../api/imports.ts";
+import { useMultiImportUpload, useConversations } from "../api/imports.ts";
 import type { Source } from "../api/imports.ts";
 
 const SOURCES: { id: Source; label: string; icon: React.ReactNode }[] = [
@@ -62,12 +62,25 @@ const SOURCES: { id: Source; label: string; icon: React.ReactNode }[] = [
   },
 ];
 
+const SOURCE_LABELS: Record<string, string> = {
+  whatsapp: "WhatsApp",
+  instagram: "Instagram",
+  imessage: "iMessage",
+  discord: "Discord",
+  email: "Email",
+};
+
 export function ImportPage() {
   const [selectedSource, setSelectedSource] = useState<Source | null>(null);
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const { state: multiState, upload, reset: resetMulti } = useMultiImportUpload();
+  const conversations = useConversations();
 
   const handleFilesDrop = (files: File[]) => {
+    // If a previous import finished, auto-reset so new files aren't silently ignored
+    if (!multiState.isUploading && multiState.totalFiles > 0) {
+      resetMulti();
+    }
     setSelectedFiles((prev) => [...prev, ...files]);
   };
 
@@ -209,6 +222,25 @@ export function ImportPage() {
         >
           Import More Files
         </button>
+      )}
+
+      {conversations.data && conversations.data.length > 0 && (
+        <div className="mt-8 animate-fade-in-up">
+          <h2 className="text-lg font-semibold text-zinc-200 mb-3">Import History</h2>
+          <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 divide-y divide-zinc-800/50">
+            {conversations.data.map((convo) => (
+              <div key={convo.id} className="flex items-center gap-3 px-4 py-3">
+                <span className="text-xs font-medium px-2 py-0.5 rounded bg-zinc-800 text-zinc-400 shrink-0">
+                  {SOURCE_LABELS[convo.source] ?? convo.source}
+                </span>
+                <span className="text-sm text-zinc-300 truncate">{convo.file_name}</span>
+                <span className="text-xs text-zinc-500 ml-auto shrink-0">
+                  {convo.message_count.toLocaleString()} msgs
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
       )}
     </div>
   );
