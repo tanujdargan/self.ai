@@ -121,34 +121,37 @@ export function ImportProgress({ state }: ImportProgressProps) {
             </div>
           </div>
 
-          {state.files.length > 1 && (
-            <div className="space-y-1.5">
-              {state.files.map((entry, i) => (
-                <div key={i} className="flex items-center gap-2 text-sm">
-                  {entry.status === "done" ? (
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-emerald-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                    </svg>
-                  ) : (
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-red-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                  )}
-                  <span className="text-zinc-400">{entry.file.name}</span>
-                  {entry.result && (
-                    <span className="text-zinc-600 text-xs ml-auto">
-                      {entry.result.message_count.toLocaleString()} messages
+          <div className="space-y-1.5">
+            {state.files.map((entry, i) => (
+              <div key={i} className="flex items-center gap-2 text-sm">
+                {entry.status === "done" ? (
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-emerald-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
+                ) : (
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-red-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                )}
+                <span className="text-zinc-400 truncate">{entry.file.name}</span>
+                {entry.result && (
+                  <span className="flex items-center gap-2 ml-auto shrink-0">
+                    <span className="text-zinc-600 text-xs px-1.5 py-0.5 bg-zinc-800 rounded">
+                      {entry.result.source}
                     </span>
-                  )}
-                  {entry.error && (
-                    <span className="text-red-400/80 text-xs ml-auto truncate max-w-48">
-                      {entry.error}
+                    <span className="text-zinc-500 text-xs">
+                      {entry.result.message_count.toLocaleString()} msgs
                     </span>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
+                  </span>
+                )}
+                {entry.error && (
+                  <span className="text-red-400/80 text-xs ml-auto truncate max-w-48">
+                    {entry.error}
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>

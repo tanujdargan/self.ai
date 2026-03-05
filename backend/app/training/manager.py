@@ -44,7 +44,11 @@ def detect_self_name(conversations: list[dict]) -> str | None:
     """Auto-detect the user's name by finding the participant in the most conversations."""
     convo_participants: Counter[str] = Counter()
     for convo in conversations:
-        for name in set(convo.get("participants", [])):
+        participants = convo.get("participants", [])
+        if not participants:
+            # Derive from message senders (email parser doesn't emit participants)
+            participants = list({m["sender"] for m in convo.get("messages", []) if m.get("sender")})
+        for name in set(participants):
             convo_participants[name] += 1
     if not convo_participants:
         return None

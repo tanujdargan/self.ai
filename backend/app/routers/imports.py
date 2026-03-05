@@ -9,7 +9,7 @@ from app.parsers.whatsapp import parse_whatsapp
 from app.parsers.instagram import parse_instagram, parse_instagram_multi
 from app.parsers.discord import parse_discord_channel
 from app.parsers.email_parser import parse_mbox
-from app.utils.zip_extract import extract_instagram_from_zip, extract_whatsapp_from_zip
+from app.utils.zip_extract import extract_email_from_zip, extract_instagram_from_zip, extract_whatsapp_from_zip
 
 router = APIRouter(prefix="/api/import", tags=["import"])
 
@@ -66,6 +66,10 @@ async def upload_chat(
                 result = _parse_instagram_zip(save_path, save_dir)
             elif source == "whatsapp":
                 result = _parse_whatsapp_zip(save_path, save_dir)
+            elif source == "email":
+                extract_dir = save_dir / "extracted"
+                mbox_path = extract_email_from_zip(save_path, extract_dir)
+                result = parse_mbox(mbox_path)
             else:
                 raise HTTPException(400, f"Zip upload not supported for {source}")
         elif source in PARSERS:

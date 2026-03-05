@@ -3,6 +3,11 @@
 from typing import Any
 
 
+def _msg_content(msg: dict[str, Any]) -> str:
+    """Get message text, handling both 'content' and 'text' keys (iMessage uses 'text')."""
+    return msg.get("content") or msg.get("text") or ""
+
+
 def format_for_style(
     conversations: list[dict[str, Any]],
     self_name: str,
@@ -23,12 +28,15 @@ def format_for_style(
                 # Look for the next message from self_name
                 for j in range(i + 1, len(messages)):
                     if messages[j]["sender"] == self_name:
-                        pairs.append(
-                            {
-                                "instruction": msg["content"],
-                                "output": messages[j]["content"],
-                            }
-                        )
+                        instruction = _msg_content(msg)
+                        output = _msg_content(messages[j])
+                        if instruction and output:
+                            pairs.append(
+                                {
+                                    "instruction": instruction,
+                                    "output": output,
+                                }
+                            )
                         break
     return pairs
 
@@ -58,7 +66,7 @@ def format_for_insights(
 
             formatted_lines = []
             for msg in chunk_msgs:
-                formatted_lines.append(f"{msg['sender']}: {msg['content']}")
+                formatted_lines.append(f"{msg['sender']}: {_msg_content(msg)}")
             conversation_text = "\n".join(formatted_lines)
 
             chunks.append(

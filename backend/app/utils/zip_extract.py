@@ -58,6 +58,32 @@ def extract_instagram_from_zip(
     return dict(conversations)
 
 
+def extract_email_from_zip(zip_path: Path, extract_dir: Path) -> Path:
+    """Extract the .mbox file from a Google Takeout zip.
+
+    Returns:
+        Path to the extracted .mbox file.
+
+    Raises:
+        ValueError: If no .mbox file found in the zip.
+    """
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        mbox_files = [n for n in zf.namelist() if n.endswith(".mbox")]
+        if not mbox_files:
+            raise ValueError("No .mbox file found in email zip")
+
+        target_name = max(mbox_files, key=lambda n: zf.getinfo(n).file_size)
+
+        target = extract_dir / Path(target_name).name
+        target.parent.mkdir(parents=True, exist_ok=True)
+
+        with zf.open(target_name) as src, open(target, "wb") as dst:
+            while chunk := src.read(8 * 1024 * 1024):
+                dst.write(chunk)
+
+    return target
+
+
 def extract_whatsapp_from_zip(zip_path: Path, extract_dir: Path) -> Path:
     """Extract the WhatsApp .txt chat file from a zip.
 

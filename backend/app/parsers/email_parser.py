@@ -156,6 +156,7 @@ def parse_mbox(path: str | Path) -> list[dict[str, Any]]:
         # Sort messages within thread by timestamp
         indices.sort(key=lambda i: parsed_msgs[i]["timestamp"])
         messages = []
+        participants_set: set[str] = set()
         for i in indices:
             m = parsed_msgs[i]
             messages.append({
@@ -163,8 +164,12 @@ def parse_mbox(path: str | Path) -> list[dict[str, Any]]:
                 "content": m["content"],
                 "timestamp": m["timestamp"],
             })
+            if m["sender"]:
+                participants_set.add(m["sender"])
         conversations.append({
             "source": "email",
+            "conversation_id": parsed_msgs[indices[0]].get("message_id") or f"thread-{root}",
+            "participants": sorted(participants_set),
             "messages": messages,
         })
 

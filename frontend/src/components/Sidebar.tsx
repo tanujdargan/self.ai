@@ -13,13 +13,14 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
   const matchRoute = useMatchRoute();
 
   return (
-    <div className="w-16 h-full bg-zinc-900 border-r border-zinc-800 flex flex-col items-center py-4 gap-2">
+    <div className="w-44 h-full bg-zinc-900 border-r border-zinc-800 flex flex-col py-4 gap-1 px-3">
       <Link
         to="/"
         onClick={onNavigate}
-        className="w-9 h-9 rounded-lg bg-zinc-800 hover:bg-zinc-700 flex items-center justify-center mb-4 transition-all active:scale-90"
+        className="h-9 rounded-lg bg-zinc-800 hover:bg-zinc-700 flex items-center gap-2.5 px-2.5 mb-3 transition-all active:scale-95"
       >
         <span className="text-sm font-bold text-zinc-300">S</span>
+        <span className="text-sm font-semibold text-zinc-300">Self.ai</span>
       </Link>
 
       {NAV_ITEMS.map((item) => {
@@ -29,14 +30,14 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
             key={item.path}
             to={item.path}
             onClick={onNavigate}
-            className={`w-10 h-10 rounded-lg flex items-center justify-center transition-all active:scale-90 ${
+            className={`h-9 rounded-lg flex items-center gap-2.5 px-2.5 transition-all active:scale-95 text-sm font-medium ${
               isActive
                 ? "bg-zinc-700 text-zinc-100"
                 : "text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300"
             }`}
-            title={item.label}
           >
             <IconForNav icon={item.icon} />
+            {item.label}
           </Link>
         );
       })}
