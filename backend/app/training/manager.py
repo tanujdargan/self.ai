@@ -79,6 +79,14 @@ async def start_training(config: dict) -> dict:
     training_examples = format_for_style(conversations, self_name)
     logger.info("Formatted %d training examples for self_name=%s from %d conversations",
                 len(training_examples), self_name, len(conversations))
+
+    # Cap examples to prevent OOM — 50K pairs is plenty for style fine-tuning
+    MAX_EXAMPLES = 50_000
+    if len(training_examples) > MAX_EXAMPLES:
+        logger.warning("Capping training examples from %d to %d to prevent OOM",
+                        len(training_examples), MAX_EXAMPLES)
+        training_examples = training_examples[:MAX_EXAMPLES]
+
     if not training_examples:
         raise ValueError(
             f"No training examples generated for '{self_name}'. "
@@ -142,10 +150,15 @@ async def _monitor_job(run_id: str, process: subprocess.Popen):
 
         process.wait()
 
-        # Capture stderr for crash diagnostics
+        # Capture stderr for crash diagnostics (timeout prevents hang if process was killed)
         stderr_output = ""
         if process.stderr:
-            stderr_output = await loop.run_in_executor(None, process.stderr.read)
+            try:
+                stderr_output = await asyncio.wait_for(
+                    loop.run_in_executor(None, process.stderr.read), timeout=5.0
+                )
+            except asyncio.TimeoutError:
+                logger.warning("Worker[%s] stderr read timed out", run_id)
         if process.returncode != 0:
             logger.error("Worker[%s] exited with code %d", run_id, process.returncode)
             if stderr_output:

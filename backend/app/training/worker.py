@@ -49,8 +49,12 @@ def train(config: dict):
 
         log({"event": "device", "device": device_type})
 
-        # Load quantization config
-        quant = config.get("quantization", "4bit")
+        # Load quantization config — normalize frontend values (int4/int8) to internal (4bit/8bit)
+        quant_raw = config.get("quantization", "int4") or "int4"
+        quant_map = {"int4": "4bit", "int8": "8bit", "4bit": "4bit", "8bit": "8bit", "none": "none"}
+        quant = quant_map.get(quant_raw, quant_raw)
+        wlog.info("Quantization: raw=%s resolved=%s device=%s", quant_raw, quant, device_type)
+
         bnb_config = None
         if quant == "4bit" and device_type == "cuda":
             from transformers import BitsAndBytesConfig
@@ -117,20 +121,28 @@ def train(config: dict):
                 for item in raw_data
             ]
 
+        max_seq_length = config.get("max_seq_length", 2048)
+        wlog.info("Tokenizing %d examples (max_length=%d)", len(texts), max_seq_length)
+
         def tokenize(examples):
             return tokenizer(
                 examples["text"],
                 truncation=True,
-                max_length=config.get("max_seq_length", 2048),
-                padding="max_length",
+                max_length=max_seq_length,
+                padding=False,
             )
 
         dataset = Dataset.from_dict({"text": texts})
         tokenized = dataset.map(tokenize, batched=True, remove_columns=["text"])
 
-        # Split
-        split_ratio = config.get("dataset_split", 0.1)
-        if split_ratio > 0 and len(tokenized) > 10:
+        # Split — dataset_split may be a float ratio or the string "train" (= no split)
+        split_val = config.get("dataset_split", 0.1)
+        try:
+            split_ratio = float(split_val)
+        except (TypeError, ValueError):
+            split_ratio = 0.0
+
+        if 0 < split_ratio < 1 and len(tokenized) > 10:
             split = tokenized.train_test_split(test_size=split_ratio, seed=config.get("shuffle_seed", 42))
             train_dataset = split["train"]
             eval_dataset = split["test"]
