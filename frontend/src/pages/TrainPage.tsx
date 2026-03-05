@@ -17,11 +17,11 @@ import type { TrainingConfig } from "../api/training";
 function getPresetOverrides(preset: PresetName): Partial<TrainingConfig> {
   switch (preset) {
     case "quick":
-      return { num_epochs: 1, lora_rank: 16, lora_alpha: 32, learning_rate: 0.0003 };
+      return { num_epochs: 1, lora_rank: 16, lora_alpha: 32, learning_rate: 0.0003, max_seq_length: 512 };
     case "balanced":
-      return { num_epochs: 3, lora_rank: 64, lora_alpha: 128, learning_rate: 0.0002 };
+      return { num_epochs: 3, lora_rank: 64, lora_alpha: 128, learning_rate: 0.0002, max_seq_length: 512 };
     case "max_quality":
-      return { num_epochs: 5, lora_rank: 128, lora_alpha: 256, learning_rate: 0.0001 };
+      return { num_epochs: 5, lora_rank: 128, lora_alpha: 256, learning_rate: 0.0001, max_seq_length: 1024 };
     case "custom":
       return {};
   }
@@ -41,7 +41,7 @@ const DEFAULT_CONFIG: TrainingConfig = {
   max_steps: -1,
   batch_size: 4,
   gradient_accumulation_steps: 4,
-  max_seq_length: 2048,
+  max_seq_length: 512,
   packing: true,
   weight_decay: 0.01,
   warmup_ratio: 0.03,

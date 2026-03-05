@@ -5,8 +5,12 @@ Structured events go to stdout, human-readable debug info goes to stderr.
 """
 import json
 import logging
+import os
 import sys
 from pathlib import Path
+
+# Reduce CUDA memory fragmentation on consumer GPUs
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
 # stderr logging for debug info captured by the manager
 logging.basicConfig(
@@ -163,13 +167,43 @@ def train(config: dict):
 
         log({"event": "progress", "message": f"Training on {len(train_dataset)} examples...", "percent": 25})
 
+        # Auto-tune batch size and enable gradient checkpointing for limited VRAM
+        batch_size = config.get("batch_size", 4)
+        grad_accum = config.get("gradient_accumulation_steps", 4)
+        use_gradient_checkpointing = False
+
+        if device_type == "cuda":
+            vram_gb = torch.cuda.get_device_properties(0).total_mem / (1024**3)
+            wlog.info("VRAM: %.1f GB", vram_gb)
+
+            # Enable gradient checkpointing — essential for QLoRA on consumer GPUs
+            use_gradient_checkpointing = True
+            model.gradient_checkpointing_enable()
+            model.enable_input_require_grads()
+
+            # Auto-reduce batch size for limited VRAM
+            if vram_gb < 16:
+                effective_batch = batch_size * grad_accum
+                batch_size = 1
+                grad_accum = max(effective_batch, 8)
+                wlog.info("VRAM < 16GB: batch_size=1, grad_accum=%d", grad_accum)
+            elif vram_gb < 24:
+                if batch_size > 2:
+                    effective_batch = batch_size * grad_accum
+                    batch_size = 2
+                    grad_accum = max(effective_batch // 2, 4)
+                    wlog.info("VRAM < 24GB: batch_size=2, grad_accum=%d", grad_accum)
+
+            log({"event": "progress", "message": f"VRAM: {vram_gb:.0f}GB — batch={batch_size}, grad_accum={grad_accum}, grad_ckpt=on", "percent": 25})
+
         output_dir = config["output_dir"]
         training_args = TrainingArguments(
             output_dir=output_dir,
             num_train_epochs=config.get("num_epochs", 3),
             max_steps=config.get("max_steps", -1),
-            per_device_train_batch_size=config.get("batch_size", 4),
-            gradient_accumulation_steps=config.get("gradient_accumulation_steps", 4),
+            per_device_train_batch_size=batch_size,
+            gradient_accumulation_steps=grad_accum,
+            gradient_checkpointing=use_gradient_checkpointing,
             learning_rate=config.get("learning_rate", 2e-4),
             lr_scheduler_type=config.get("lr_scheduler", "cosine"),
             weight_decay=config.get("weight_decay", 0.01),
