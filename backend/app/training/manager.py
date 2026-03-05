@@ -2,10 +2,12 @@ import asyncio
 import json
 import subprocess
 import sys
+from collections import Counter
 from pathlib import Path
 from uuid import uuid4
 
 from app.config import settings
+from app.services.data_formatter import format_for_style
 
 # Active training processes
 _active_jobs: dict[str, subprocess.Popen] = {}
@@ -23,13 +25,67 @@ def unsubscribe(run_id: str, queue: asyncio.Queue):
         _job_subscribers[run_id] = [q for q in _job_subscribers[run_id] if q is not queue]
 
 
-async def start_training(config: dict) -> str:
+def load_parsed_conversations() -> list[dict]:
+    """Load all parsed conversation JSON files, normalizing to a flat list."""
+    conversations: list[dict] = []
+    parsed_dir = settings.parsed_dir
+    if not parsed_dir.exists():
+        return conversations
+    for path in sorted(parsed_dir.glob("*.json")):
+        data = json.loads(path.read_text())
+        if isinstance(data, list):
+            conversations.extend(data)
+        else:
+            conversations.append(data)
+    return conversations
+
+
+def detect_self_name(conversations: list[dict]) -> str | None:
+    """Auto-detect the user's name by finding the participant in the most conversations."""
+    convo_participants: Counter[str] = Counter()
+    for convo in conversations:
+        for name in set(convo.get("participants", [])):
+            convo_participants[name] += 1
+    if not convo_participants:
+        return None
+    return convo_participants.most_common(1)[0][0]
+
+
+async def start_training(config: dict) -> dict:
+    """Prepare training data from parsed conversations and spawn worker.
+
+    Returns dict with run_id and detected_self_name.
+    Raises ValueError if no data or no training examples.
+    """
+    # Collect and format training data
+    conversations = load_parsed_conversations()
+    if not conversations:
+        raise ValueError("No imported conversation data found. Import conversations first.")
+
+    self_name = config.get("self_name") or detect_self_name(conversations)
+    if not self_name:
+        raise ValueError("Could not detect your name. Import conversations with participants.")
+
+    training_examples = format_for_style(conversations, self_name)
+    if not training_examples:
+        raise ValueError(
+            f"No training examples generated for '{self_name}'. "
+            "Check that this name matches a participant in your conversations."
+        )
+
     run_id = uuid4().hex[:12]
     output_dir = str(settings.adapters_dir / run_id)
     Path(output_dir).mkdir(parents=True, exist_ok=True)
 
+    # Write formatted training data
+    settings.training_dir.mkdir(parents=True, exist_ok=True)
+    data_path = settings.training_dir / f"{run_id}.json"
+    data_path.write_text(json.dumps(training_examples))
+
     config["output_dir"] = output_dir
     config["cache_dir"] = str(settings.base_models_dir)
+    config["data_path"] = str(data_path)
+    config["data_format"] = "style"
 
     worker_path = Path(__file__).parent / "worker.py"
 
@@ -49,7 +105,7 @@ async def start_training(config: dict) -> str:
     # Start monitoring in background
     asyncio.create_task(_monitor_job(run_id, process))
 
-    return run_id
+    return {"run_id": run_id, "detected_self_name": self_name}
 
 
 async def _monitor_job(run_id: str, process: subprocess.Popen):

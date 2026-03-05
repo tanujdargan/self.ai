@@ -26,6 +26,7 @@ class TrainingConfig(BaseModel):
     mode: str = Field(..., description="Training mode: 'full' or 'lora'")
     base_model: str = Field(..., description="HuggingFace model ID or local path")
     preset: Optional[str] = Field(None, description="Named preset to load defaults from")
+    self_name: Optional[str] = Field(None, description="Your name in conversations (auto-detected if omitted)")
 
     # Quantization
     quantization: Optional[str] = Field(None, description="Quantization method (e.g. 'int4', 'int8')")

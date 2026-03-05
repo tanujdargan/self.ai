@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { ModelPicker } from "../components/ModelPicker";
 import { PresetSelector } from "../components/PresetSelector";
 import type { PresetName } from "../components/PresetSelector";
@@ -6,6 +6,7 @@ import { AdvancedSettings } from "../components/AdvancedSettings";
 import { TrainingDashboard } from "../components/TrainingDashboard";
 import {
   useHardware,
+  useSelfName,
   useStartTraining,
   useCancelTraining,
   useTrainingProgress,
@@ -60,7 +61,14 @@ export function TrainPage() {
   const [runId, setRunId] = useState<string | null>(null);
 
   const hardware = useHardware();
+  const selfNameQuery = useSelfName();
   const startTraining = useStartTraining();
+
+  useEffect(() => {
+    if (selfNameQuery.data?.self_name && !config.self_name) {
+      setConfig((prev) => ({ ...prev, self_name: selfNameQuery.data!.self_name! }));
+    }
+  }, [selfNameQuery.data]);
   const cancelTraining = useCancelTraining();
   const { events, connected, disconnect } = useTrainingProgress(runId);
 
@@ -155,6 +163,24 @@ export function TrainPage() {
             onChange={handleModelChange}
             hardware={hardware.data}
           />
+
+          <div className="space-y-2">
+            <label className="block text-sm font-medium text-zinc-300">
+              Your Name in Conversations
+            </label>
+            <input
+              type="text"
+              value={config.self_name ?? ""}
+              onChange={(e) => updateConfig("self_name", e.target.value || undefined)}
+              placeholder={selfNameQuery.isLoading ? "Detecting..." : "e.g. John"}
+              className="w-full px-3 py-2 rounded-lg bg-zinc-800 border border-zinc-700 text-zinc-100 placeholder-zinc-500 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500"
+            />
+            <p className="text-xs text-zinc-500">
+              {selfNameQuery.data?.self_name
+                ? `Auto-detected: ${selfNameQuery.data.self_name}`
+                : "Import conversations to auto-detect"}
+            </p>
+          </div>
 
           <PresetSelector value={preset} onChange={handlePresetChange} />
 

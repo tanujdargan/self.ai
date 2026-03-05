@@ -1,6 +1,7 @@
 import json
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi.responses import JSONResponse
 
 from app.models.schemas import TrainingConfig
 from app.training.manager import cancel_training, start_training, subscribe, unsubscribe
@@ -10,8 +11,15 @@ router = APIRouter(tags=["training"])
 
 @router.post("/api/train")
 async def begin_training(config: TrainingConfig):
-    run_id = await start_training(config.model_dump())
-    return {"run_id": run_id, "status": "started"}
+    try:
+        result = await start_training(config.model_dump())
+    except ValueError as e:
+        return JSONResponse(status_code=422, content={"detail": str(e)})
+    return {
+        "run_id": result["run_id"],
+        "status": "started",
+        "detected_self_name": result["detected_self_name"],
+    }
 
 
 @router.post("/api/train/{run_id}/cancel")

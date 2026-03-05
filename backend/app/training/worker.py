@@ -93,7 +93,7 @@ def train(config: dict):
         raw_data = json.loads(data_path.read_text())
 
         # Format based on mode
-        if config["mode"] == "style":
+        if config.get("data_format", "style") == "style":
             texts = [
                 f"<|user|>\n{item['instruction']}\n<|assistant|>\n{item['output']}"
                 for item in raw_data

@@ -5,6 +5,7 @@ export interface TrainingConfig {
   mode: string;
   base_model: string;
   preset: string;
+  self_name?: string;
   quantization: string;
   lora_rank: number;
   lora_alpha: number;
@@ -33,6 +34,7 @@ export interface TrainingConfig {
 export interface TrainStartResponse {
   run_id: string;
   status: string;
+  detected_self_name?: string;
 }
 
 export interface HardwareInfo {
@@ -60,6 +62,18 @@ export function useHardware() {
   });
 }
 
+export function useSelfName() {
+  return useQuery<{ self_name: string | null }>({
+    queryKey: ["self-name"],
+    queryFn: async () => {
+      const res = await fetch("/api/data/self-name");
+      if (!res.ok) throw new Error("Failed to detect name");
+      return res.json();
+    },
+    staleTime: 30_000,
+  });
+}
+
 export function useStartTraining() {
   return useMutation<TrainStartResponse, Error, TrainingConfig>({
     mutationFn: async (config) => {
@@ -69,8 +83,8 @@ export function useStartTraining() {
         body: JSON.stringify(config),
       });
       if (!res.ok) {
-        const err = await res.text();
-        throw new Error(err || "Failed to start training");
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.detail || "Failed to start training");
       }
       return res.json();
     },

@@ -2,6 +2,7 @@ import shutil
 from fastapi import APIRouter
 from app.config import settings
 from app.db.database import get_db
+from app.training.manager import load_parsed_conversations, detect_self_name
 
 router = APIRouter(prefix="/api/data", tags=["data"])
 
@@ -52,6 +53,13 @@ async def list_conversations():
         return [dict(r) for r in await cursor.fetchall()]
     finally:
         await db.close()
+
+
+@router.get("/self-name")
+async def get_self_name():
+    conversations = load_parsed_conversations()
+    name = detect_self_name(conversations) if conversations else None
+    return {"self_name": name}
 
 
 @router.delete("")
