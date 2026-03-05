@@ -48,8 +48,8 @@ pip install -r requirements.txt
 
 # Frontend
 cd ../frontend
-npm install
-npm run build
+bun install
+bun run build
 
 # Run
 cd ../backend

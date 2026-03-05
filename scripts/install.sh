@@ -59,7 +59,7 @@ run_pip() {
     fi
 }
 
-run_npm() {
+run_bun() {
     local allow_fail=false
     if [ "${1:-}" = "--allow-fail" ]; then
         allow_fail=true
@@ -67,15 +67,15 @@ run_npm() {
     fi
     local exit_code=0
     if [ "$VERBOSE" = true ]; then
-        npm "$@" || exit_code=$?
+        bun "$@" || exit_code=$?
     else
-        exit_code=$(npm "$@" --silent 2>/dev/null; echo $?)
+        exit_code=$(bun "$@" 2>/dev/null; echo $?)
     fi
     if [ "$exit_code" -ne 0 ]; then
         if [ "$allow_fail" = true ]; then
             return 1
         fi
-        fail "npm $1 failed (exit code $exit_code). Re-run with --verbose for details."
+        fail "bun $1 failed (exit code $exit_code). Re-run with --verbose for details."
     fi
 }
 
@@ -257,27 +257,17 @@ check_python() {
 }
 
 # ---------------------------------------------------------------------------
-check_node() {
-    step "Checking Node.js"
+check_bun() {
+    step "Checking Bun"
 
-    if ! command -v node &>/dev/null; then
-        fail "Node.js not found. Install Node 18+ or use nvm:\n  curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash\n  nvm install 20"
+    if ! command -v bun &>/dev/null; then
+        fail "Bun not found. Install it:\n  curl -fsSL https://bun.sh/install | bash"
     fi
 
     local ver
-    ver="$(node -v | sed 's/^v//')"
-    local major="${ver%%.*}"
+    ver="$(bun --version)"
 
-    if [ "$major" -lt 18 ]; then
-        fail "Node $ver found, but 18+ is required.\nUpdate with nvm:\n  nvm install 20 && nvm use 20"
-    fi
-
-    ok "Node.js v$ver"
-
-    if ! command -v npm &>/dev/null; then
-        fail "npm not found (should be bundled with Node.js)"
-    fi
-    ok "npm $(npm -v)"
+    ok "Bun v$ver"
 }
 
 # ---------------------------------------------------------------------------
@@ -361,11 +351,11 @@ setup_frontend() {
     fi
 
     log "Installing frontend dependencies..."
-    run_npm install
-    ok "npm packages installed"
+    run_bun install
+    ok "Packages installed"
 
     log "Building frontend..."
-    npm run build || fail "Frontend build failed. Check the output above."
+    bun run build || fail "Frontend build failed. Check the output above."
     ok "Frontend built"
 
     cd "$SELFAI_DIR"
@@ -461,7 +451,7 @@ main() {
     detect_platform
     detect_gpu
     check_python
-    check_node
+    check_bun
     ensure_repo
     setup_backend
     setup_frontend

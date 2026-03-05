@@ -74,8 +74,8 @@ case "${1:-start}" in
         if [ -f "$SELFAI_DIR/frontend/package.json" ]; then
             echo "Updating frontend..."
             cd "$SELFAI_DIR/frontend"
-            npm install --silent
-            npm run build
+            bun install
+            bun run build
         fi
 
         echo "Update complete."
