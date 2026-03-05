@@ -45,10 +45,13 @@ export interface HardwareInfo {
 }
 
 export type TrainingEvent =
-  | { event: "start"; run_id: string }
-  | { event: "progress"; step: number; total_steps: number; loss: number; epoch: number; learning_rate: number }
-  | { event: "complete"; run_id: string; output_path: string }
-  | { event: "error"; message: string };
+  | { event: "start"; run_id: string; message?: string }
+  | { event: "progress"; message?: string; percent?: number; step?: number; total_steps?: number }
+  | { event: "metrics"; run_id: string; step: number; total_steps: number; percent: number; loss?: number; epoch?: number; learning_rate?: number; [key: string]: unknown }
+  | { event: "complete"; run_id: string; output_path?: string; message?: string; percent?: number }
+  | { event: "error"; message: string }
+  | { event: "finished"; run_id: string; return_code: number; stderr?: string }
+  | { event: "device"; device: string };
 
 export function useHardware() {
   return useQuery<HardwareInfo>({

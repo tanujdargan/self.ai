@@ -7,18 +7,24 @@ interface TrainingDashboardProps {
 }
 
 export function TrainingDashboard({ events, connected, onCancel }: TrainingDashboardProps) {
-  const progressEvents = events.filter(
-    (e): e is Extract<TrainingEvent, { event: "progress" }> => e.event === "progress"
+  const metricsEvents = events.filter(
+    (e): e is Extract<TrainingEvent, { event: "metrics" }> => e.event === "metrics"
   );
-  const latest = progressEvents.length > 0 ? progressEvents[progressEvents.length - 1] : null;
+  const latestMetrics = metricsEvents.length > 0 ? metricsEvents[metricsEvents.length - 1] : null;
+  const latestStatus = [...events].reverse().find((e) => e.event === "progress" || e.event === "start");
   const isComplete = events.some((e) => e.event === "complete");
   const errorEvent = events.find(
     (e): e is Extract<TrainingEvent, { event: "error" }> => e.event === "error"
   );
+  const finishedEvent = events.find(
+    (e): e is Extract<TrainingEvent, { event: "finished" }> => e.event === "finished"
+  );
 
-  const progress = latest && latest.total_steps > 0
-    ? Math.round((latest.step / latest.total_steps) * 100)
-    : 0;
+  const progress = latestMetrics
+    ? latestMetrics.percent ?? (latestMetrics.total_steps > 0
+      ? Math.round((latestMetrics.step / latestMetrics.total_steps) * 100)
+      : 0)
+    : (latestStatus && "percent" in latestStatus ? (latestStatus.percent ?? 0) : 0);
 
   return (
     <div className="space-y-6">
@@ -29,7 +35,7 @@ export function TrainingDashboard({ events, connected, onCancel }: TrainingDashb
             className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs ${
               isComplete
                 ? "bg-emerald-500/10 text-emerald-400"
-                : errorEvent
+                : (errorEvent || (finishedEvent && finishedEvent.return_code !== 0))
                   ? "bg-red-500/10 text-red-400"
                   : connected
                     ? "bg-blue-500/10 text-blue-400"
@@ -40,17 +46,17 @@ export function TrainingDashboard({ events, connected, onCancel }: TrainingDashb
               className={`w-1.5 h-1.5 rounded-full ${
                 isComplete
                   ? "bg-emerald-400"
-                  : errorEvent
+                  : (errorEvent || (finishedEvent && finishedEvent.return_code !== 0))
                     ? "bg-red-400"
                     : connected
                       ? "bg-blue-400 animate-pulse"
                       : "bg-zinc-500"
               }`}
             />
-            {isComplete ? "Complete" : errorEvent ? "Error" : connected ? "Training" : "Connecting"}
+            {isComplete ? "Complete" : (errorEvent || (finishedEvent && finishedEvent.return_code !== 0)) ? "Error" : connected ? "Training" : "Connecting"}
           </span>
         </div>
-        {!isComplete && !errorEvent && (
+        {!isComplete && !errorEvent && !(finishedEvent && finishedEvent.return_code !== 0) && (
           <button
             type="button"
             onClick={onCancel}
@@ -67,29 +73,42 @@ export function TrainingDashboard({ events, connected, onCancel }: TrainingDashb
         </div>
       )}
 
+      {finishedEvent && finishedEvent.return_code !== 0 && !errorEvent && (
+        <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-sm text-red-300 space-y-1">
+          <div>Worker crashed (exit code {finishedEvent.return_code})</div>
+          {finishedEvent.stderr && (
+            <pre className="text-xs text-red-400/80 whitespace-pre-wrap font-mono mt-1">{finishedEvent.stderr}</pre>
+          )}
+        </div>
+      )}
+
       <div>
         <div className="flex justify-between text-xs text-zinc-400 mb-1.5">
           <span>
-            {latest ? `Step ${latest.step} / ${latest.total_steps}` : "Waiting for data..."}
+            {latestMetrics
+              ? `Step ${latestMetrics.step} / ${latestMetrics.total_steps}`
+              : latestStatus && "message" in latestStatus
+                ? latestStatus.message
+                : "Waiting for data..."}
           </span>
           <span>{progress}%</span>
         </div>
         <div className="w-full h-2 bg-zinc-800 rounded-full overflow-hidden">
           <div
             className={`h-full rounded-full transition-all duration-300 ${
-              isComplete ? "bg-emerald-500" : errorEvent ? "bg-red-500" : "bg-blue-500"
+              isComplete ? "bg-emerald-500" : (errorEvent || (finishedEvent && finishedEvent.return_code !== 0)) ? "bg-red-500" : "bg-blue-500"
             }`}
             style={{ width: `${progress}%` }}
           />
         </div>
       </div>
 
-      {latest && (
+      {latestMetrics && (
         <div className="grid grid-cols-4 gap-4">
-          <Stat label="Epoch" value={latest.epoch.toFixed(2)} />
-          <Stat label="Step" value={`${latest.step}`} />
-          <Stat label="Loss" value={latest.loss.toFixed(4)} />
-          <Stat label="Learning Rate" value={latest.learning_rate.toExponential(2)} />
+          <Stat label="Epoch" value={latestMetrics.epoch?.toFixed(2) ?? "-"} />
+          <Stat label="Step" value={`${latestMetrics.step}`} />
+          <Stat label="Loss" value={latestMetrics.loss?.toFixed(4) ?? "-"} />
+          <Stat label="Learning Rate" value={latestMetrics.learning_rate?.toExponential(2) ?? "-"} />
         </div>
       )}
 

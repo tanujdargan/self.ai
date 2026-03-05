@@ -74,7 +74,9 @@ export function TrainPage() {
 
   const isTraining = runId !== null;
   const isComplete = events.some((e) => e.event === "complete");
-  const hasError = events.some((e) => e.event === "error");
+  const hasError = events.some(
+    (e) => e.event === "error" || (e.event === "finished" && "return_code" in e && e.return_code !== 0)
+  );
 
   const updateConfig = useCallback(
     <K extends keyof TrainingConfig>(key: K, value: TrainingConfig[K]) => {
