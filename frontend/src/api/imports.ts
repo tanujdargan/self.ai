@@ -158,6 +158,36 @@ export function useMultiImportUpload() {
   return { state, upload, reset };
 }
 
+export interface PathImportResult {
+  source: Source;
+  imported: { import_id: string; file_name: string; message_count: number }[];
+  errors: { file: string; error: string }[];
+  total_files: number;
+  total_messages: number;
+}
+
+export function usePathImport() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ path, source }: { path: string; source: Source }): Promise<PathImportResult> => {
+      const res = await fetch("/api/import/from-path", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path, source }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.detail || "Import failed");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["conversations"] });
+      queryClient.invalidateQueries({ queryKey: ["data-stats"] });
+    },
+  });
+}
+
 export function useConversations() {
   return useQuery<Conversation[]>({
     queryKey: ["conversations"],

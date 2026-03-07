@@ -1,11 +1,14 @@
 import json
 import logging
+import shutil
 import traceback
 import zipfile
 from datetime import datetime, timezone
+from pathlib import Path
 from uuid import uuid4
 
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException
+from pydantic import BaseModel
 
 from app.config import settings
 from app.db.database import get_db
@@ -139,4 +142,122 @@ async def upload_chat(
         "file_name": file.filename,
         "message_count": total_messages,
         "status": "parsed",
+    }
+
+
+class PathImportRequest(BaseModel):
+    path: str
+    source: str
+
+
+@router.post("/from-path")
+async def import_from_path(req: PathImportRequest):
+    """Import chat files from a server-side path (file or directory)."""
+    source = req.source
+    if source not in PARSERS and source not in ("discord", "imessage"):
+        raise HTTPException(400, f"Unsupported source: {source}")
+
+    target = Path(req.path)
+    if not target.exists():
+        raise HTTPException(404, f"Path not found: {req.path}")
+
+    # Collect files to process
+    if target.is_file():
+        files = [target]
+    elif target.is_dir():
+        files = sorted(f for f in target.iterdir() if f.is_file() and not f.name.startswith("."))
+        if not files:
+            raise HTTPException(400, f"No files found in directory: {req.path}")
+    else:
+        raise HTTPException(400, f"Path is not a file or directory: {req.path}")
+
+    results = []
+    errors = []
+
+    for file_path in files:
+        import_id = uuid4().hex[:12]
+        save_dir = settings.imports_dir / import_id
+        save_dir.mkdir(parents=True, exist_ok=True)
+
+        # Copy file into imports dir (keeps originals untouched)
+        save_path = save_dir / file_path.name
+        shutil.copy2(file_path, save_path)
+
+        # Check for duplicate
+        db = await get_db()
+        try:
+            cursor = await db.execute(
+                "SELECT COUNT(*) as cnt FROM conversations WHERE file_name = ? AND source = ?",
+                (file_path.name, source),
+            )
+            row = await cursor.fetchone()
+            if row["cnt"] > 0:
+                errors.append({"file": file_path.name, "error": "Already imported"})
+                continue
+        finally:
+            await db.close()
+
+        # Parse
+        try:
+            if zipfile.is_zipfile(save_path):
+                if source == "instagram":
+                    result = _parse_instagram_zip(save_path, save_dir)
+                elif source == "whatsapp":
+                    result = _parse_whatsapp_zip(save_path, save_dir)
+                elif source == "email":
+                    extract_dir = save_dir / "extracted"
+                    mbox_path = extract_email_from_zip(save_path, extract_dir)
+                    result = parse_mbox(mbox_path)
+                else:
+                    errors.append({"file": file_path.name, "error": f"Zip not supported for {source}"})
+                    continue
+            elif source in PARSERS:
+                result = PARSERS[source](save_path)
+            else:
+                errors.append({"file": file_path.name, "error": f"Parser not available for {source}"})
+                continue
+
+            if isinstance(result, list):
+                total_messages = sum(len(r["messages"]) for r in result)
+            else:
+                total_messages = len(result["messages"])
+        except Exception as e:
+            logger.error("Parse failed for %s (%s): %s\n%s", file_path.name, source, e, traceback.format_exc())
+            errors.append({"file": file_path.name, "error": str(e)})
+            continue
+
+        # Save parsed result
+        parsed_path = settings.parsed_dir / f"{import_id}.json"
+        parsed_data = result if not isinstance(result, list) else result
+        parsed_path.write_text(json.dumps(parsed_data, indent=2, default=str))
+
+        # Persist to DB
+        convos = result if isinstance(result, list) else [result]
+        db = await get_db()
+        try:
+            now = datetime.now(timezone.utc).isoformat()
+            for convo in convos:
+                participants = convo.get("participants", [])
+                msg_count = len(convo.get("messages", []))
+                await db.execute(
+                    "INSERT INTO conversations (id, source, file_name, participant_self, participants_json, message_count, imported_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (uuid4().hex[:12], source, file_path.name, "", json.dumps(participants), msg_count, now),
+                )
+            await db.commit()
+        finally:
+            await db.close()
+
+        results.append({
+            "import_id": import_id,
+            "file_name": file_path.name,
+            "message_count": total_messages,
+        })
+        logger.info("Path import: id=%s source=%s file=%s messages=%d", import_id, source, file_path.name, total_messages)
+
+    return {
+        "source": source,
+        "imported": results,
+        "errors": errors,
+        "total_files": len(results) + len(errors),
+        "total_messages": sum(r["message_count"] for r in results),
     }

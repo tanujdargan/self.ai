@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { FileDropZone } from "../components/FileDropZone.tsx";
 import { ImportProgress } from "../components/ImportProgress.tsx";
-import { useMultiImportUpload, useConversations } from "../api/imports.ts";
+import { useMultiImportUpload, usePathImport, useConversations } from "../api/imports.ts";
 import type { Source } from "../api/imports.ts";
 
 const SOURCES: { id: Source; label: string; icon: React.ReactNode }[] = [
@@ -70,10 +70,15 @@ const SOURCE_LABELS: Record<string, string> = {
   email: "Email",
 };
 
+type ImportMode = "upload" | "path";
+
 export function ImportPage() {
+  const [importMode, setImportMode] = useState<ImportMode>("upload");
   const [selectedSource, setSelectedSource] = useState<Source | null>(null);
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [serverPath, setServerPath] = useState("");
   const { state: multiState, upload, reset: resetMulti } = useMultiImportUpload();
+  const pathImport = usePathImport();
   const conversations = useConversations();
 
   const handleFilesDrop = (files: File[]) => {
@@ -98,6 +103,18 @@ export function ImportPage() {
     setSelectedFiles([]);
     setSelectedSource(null);
     resetMulti();
+  };
+
+  const handlePathImport = () => {
+    if (serverPath.trim() && selectedSource) {
+      pathImport.mutate({ path: serverPath.trim(), source: selectedSource });
+    }
+  };
+
+  const handlePathReset = () => {
+    setServerPath("");
+    setSelectedSource(null);
+    pathImport.reset();
   };
 
   const handleRemoveFile = (index: number) => {
@@ -125,7 +142,7 @@ export function ImportPage() {
             <button
               key={source.id}
               onClick={() => handleSourceSelect(source.id)}
-              disabled={multiState.isUploading}
+              disabled={multiState.isUploading || pathImport.isPending}
               className={`
                 flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium
                 transition-all duration-200 active:scale-95
@@ -134,7 +151,7 @@ export function ImportPage() {
                     ? "bg-zinc-100 text-zinc-900"
                     : "bg-zinc-800/80 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200"
                 }
-                ${multiState.isUploading ? "opacity-50 cursor-not-allowed" : ""}
+                ${multiState.isUploading || pathImport.isPending ? "opacity-50 cursor-not-allowed" : ""}
               `}
             >
               {source.icon}
@@ -144,14 +161,106 @@ export function ImportPage() {
         </div>
       </div>
 
-      <div className="animate-fade-in-up stagger-2">
-        <FileDropZone
-          onFilesDrop={handleFilesDrop}
-          disabled={multiState.isUploading}
-        />
+      <div className="mb-4 animate-fade-in-up stagger-2">
+        <div className="flex rounded-lg bg-zinc-800/50 p-1">
+          <button
+            onClick={() => setImportMode("upload")}
+            className={`flex-1 py-2 px-3 rounded-md text-sm font-medium transition-colors ${
+              importMode === "upload"
+                ? "bg-zinc-700 text-zinc-100"
+                : "text-zinc-500 hover:text-zinc-300"
+            }`}
+          >
+            Upload Files
+          </button>
+          <button
+            onClick={() => setImportMode("path")}
+            className={`flex-1 py-2 px-3 rounded-md text-sm font-medium transition-colors ${
+              importMode === "path"
+                ? "bg-zinc-700 text-zinc-100"
+                : "text-zinc-500 hover:text-zinc-300"
+            }`}
+          >
+            Server Path
+          </button>
+        </div>
       </div>
 
-      {selectedFiles.length > 0 && isIdle && (
+      {importMode === "upload" ? (
+        <div className="animate-fade-in-up">
+          <FileDropZone
+            onFilesDrop={handleFilesDrop}
+            disabled={multiState.isUploading}
+          />
+        </div>
+      ) : (
+        <div className="animate-fade-in-up space-y-3">
+          <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-5">
+            <label className="block text-sm font-medium text-zinc-400 mb-2">
+              File or directory path on the server
+            </label>
+            <input
+              type="text"
+              value={serverPath}
+              onChange={(e) => setServerPath(e.target.value)}
+              placeholder="/root/data/whatsapp_chats/"
+              disabled={pathImport.isPending}
+              className="w-full px-3 py-2.5 rounded-lg bg-zinc-800 border border-zinc-700 text-zinc-100 placeholder-zinc-500 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 disabled:opacity-50"
+            />
+            <p className="text-xs text-zinc-500 mt-2">
+              Enter the path to a file or directory on the server. Useful for remote training setups where data was copied via SCP.
+            </p>
+          </div>
+
+          {pathImport.error && (
+            <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-sm text-red-300">
+              {pathImport.error.message}
+            </div>
+          )}
+
+          {pathImport.data && (
+            <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-5 space-y-3">
+              <div className="flex items-center gap-2">
+                <div className="w-2 h-2 rounded-full bg-green-500" />
+                <span className="text-sm font-medium text-zinc-200">
+                  Imported {pathImport.data.imported.length} file{pathImport.data.imported.length !== 1 ? "s" : ""} — {pathImport.data.total_messages.toLocaleString()} messages
+                </span>
+              </div>
+              {pathImport.data.imported.map((f) => (
+                <div key={f.import_id} className="flex items-center justify-between text-sm">
+                  <span className="text-zinc-400 font-mono truncate">{f.file_name}</span>
+                  <span className="text-zinc-500 shrink-0 ml-2">{f.message_count.toLocaleString()} msgs</span>
+                </div>
+              ))}
+              {pathImport.data.errors.map((e, i) => (
+                <div key={i} className="flex items-center justify-between text-sm">
+                  <span className="text-zinc-400 font-mono truncate">{e.file}</span>
+                  <span className="text-red-400 shrink-0 ml-2">{e.error}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {!pathImport.data ? (
+            <button
+              onClick={handlePathImport}
+              disabled={!serverPath.trim() || !selectedSource || pathImport.isPending}
+              className="w-full py-2.5 rounded-lg bg-blue-600 text-white font-medium text-sm hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              {pathImport.isPending ? "Importing..." : !selectedSource ? "Select a source first" : "Import from Path"}
+            </button>
+          ) : (
+            <button
+              onClick={handlePathReset}
+              className="w-full py-2.5 text-sm font-medium text-zinc-400 hover:text-zinc-200 bg-zinc-800/50 hover:bg-zinc-800 rounded-lg transition-colors"
+            >
+              Import More Files
+            </button>
+          )}
+        </div>
+      )}
+
+      {importMode === "upload" && selectedFiles.length > 0 && isIdle && (
         <div className="mt-4 space-y-2">
           {selectedFiles.map((file, i) => (
             <div
